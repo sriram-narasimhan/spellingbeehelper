@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spelling Bee Helper</title>
+  <!-- <link rel="stylesheet" href="themes/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="https://code.jquery.com/mobile/1.4.5/jquery.mobile.structure-1.4.5.min.css" />
+  <link rel="stylesheet" href="themes/bootstrap/jquery.mobile.icons.min.css" /> -->
+  <link rel="stylesheet" type="text/css" href="https://code.jquery.com/mobile/1.4.5/jquery.mobile-1.4.5.min.css"/>
+  <script src="https://code.jquery.com/jquery-2.2.4.min.js"></script>
+  <script src="https://code.jquery.com/mobile/1.4.5/jquery.mobile-1.4.5.min.js"></script>
+  <script src="index.js"></script>
+</head>
+
+<body>
+  <div data-role="page">
+    <div data-role="header" data-position="fixed" data-tap-toggle="false">
+      <h1>Spelling Bee Helper</h1>
+    </div>
+
+    <div id="main-content" data-role="main" class="ui-content">
+      <ul id="wordlists" data-type="content" data-role="listview" data-inset="true">
+  		</ul>
+      <ul id="words" data-type="content" data-role="listview" data-inset="true">
+  		</ul>
+      <div id="word" data-type="content">
+      </div>
+      <div id="practice" data-type="content">
+        <h1>Not ready yet!</h1>
+      </div>
+    </div>
+
+    <div data-role="footer" data-position="fixed" data-tap-toggle="false">
+      <div data-role="navbar">
+        <ul>
+          <li><a class="ui-btn-active" data-type="navbar" data-name="load-wordlist" href="#" data-icon="action">Load Wordlist</a></li>
+          <li><a data-type="navbar" data-name="show-words" href="#" data-icon="bars">Show Words</a></li>
+          <li><a data-type="navbar" data-name="practice" href="#" data-icon="user">Practice</a></li>
+        </ul>
+      </div>
+    </div>
+    <div data-role="popup" id="loading-popup" class="ui-content" data-theme="a" data-dismissible="false" data-history="false">
+      <img class="center" src="http://demos.jquerymobile.com/1.4.5/css/themes/default/images/ajax-loader.gif"/>
+      <div class="center" id="loading-popup-content">Loading...</div>
+    </div>
+    <div data-role="popup" id="message-popup" class="ui-content" data-theme="b" data-dismissible="false" data-history="false">
+      <a href="#" data-rel="back" data-role="button" data-theme="a" data-icon="delete" data-iconpos="notext" class="ui-btn-right">Close</a>
+      <div class="center" id="message-popup-content">Loading...</div>
+    </div>
+  </div>
+</body>
+</html>
