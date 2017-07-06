@@ -149,7 +149,6 @@ SPH.wordManager = new function() {
     element.show();
   };
   this.add = function(name) {
-    console.log("adding " + name);
     var self = this;
     var promise = new Promise(function(resolve, reject) {
       if (name in self.words) return resolve(self.words[name]);
@@ -170,10 +169,11 @@ SPH.wordManager = new function() {
 SPH.word = function(name) {
   this.name = name;
   this.wordnikAudio = [];
+  this.merriamWebsterAudio = [];
   this.definitions = [];
   this.hasAudio = function() {
     var self = this;
-    return self.wordnikAudio && self.wordnikAudio.length > 0;
+    return (self.wordnikAudio && self.wordnikAudio.length > 0) || (self.merriamWebsterAudio && self.merriamWebsterAudio.length > 0);
   };
   this.toHTML = function() {
     var self = this;
@@ -182,11 +182,18 @@ SPH.word = function(name) {
     html += self.name;
     html += "</h1>";
     var audioData = self.wordnikAudio;
-    if (!audioData || audioData.length < 1) {
+    if (!self.hasAudio()) {
       html += "<div>No audio found</div>";
-    } else {
+    }
+    if (audioData && audioData.length > 0) {
       $.each(audioData, function( index, value ) {
         html += '<audio controls preload="auto"><source src="' + value.fileUrl + '" type="audio/mpeg"></audio>';
+      });
+    }
+    audioData = self.merriamWebsterAudio;
+    if (audioData && audioData.length > 0) {
+      $.each(audioData, function( index, value ) {
+        html += '<audio controls preload="auto"><source src="' + value.fileUrl + '" type="audio/wav"></audio>';
       });
     }
     var definitions = self.wordnikDefinitions;
@@ -201,7 +208,6 @@ SPH.word = function(name) {
   };
   this.load = function() {
     var self = this;
-    console.log("loading " + self.name);
     var promises = [];
     promises.push(self.loadWordnikAudio());
     promises.push(self.loadWordnikDefinitions());
@@ -227,13 +233,98 @@ SPH.word = function(name) {
     });
     return promise;
   };
+  this.loadMerriamWebsterEntry = function(prefix, key) {
+    var self = this;
+    console.log("getting merriam for " + self.name);
+    var promise = new Promise(function(resolve, reject) {
+      var request = $.ajax({
+        method: "GET",
+        dataType: "xml",
+        url: "http://www.dictionaryapi.com/api/v1/references/" + prefix + "/xml/" + self.name + "?key=" + key,
+        //url: "http://www.dictionaryapi.com/api/v1/references/sd3/xml/" + self.name + "?key=f8c5fbfc-a08d-47b1-9494-06b8d70b8f38",
+        timeout: 10000,
+      });
+      request.done(function(data) {
+        var xml = $(data);
+        var entry = xml.find('entry[id="' + self.name + '"]');
+        if (!entry) return resolve(data);
+        var sound = entry.find('sound');
+        if (!sound) return resolve(data);
+        var wav = sound.find('wav');
+        console.log("wav is " + wav);
+        if (!wav) return resolve(data);
+        var wavFile = wav.text();
+        if (wavFile) {
+          console.log("found " + wavFile + " for " + self.name);
+          var fileUrl = "http://media.merriam-webster.com/soundc11/" + wavFile.charAt(0) + "/" + wavFile;
+          self.merriamWebsterAudio.push({
+            'fileUrl': fileUrl,
+          });
+        }
+        resolve(data);
+      });
+      request.fail( function(jqXHR, textStatus, errorThrown) {
+        var message = "Error - " + textStatus + ": " + errorThrown;
+        resolve(new Error(message));
+      });
+    });
+    return promise;
+  };
+  this.loadMerriamWebsterEntrysd4 = function(prefix, suffix) {
+    var self = this;
+    console.log("getting merriam for " + self.name);
+    var promise = new Promise(function(resolve, reject) {
+      var request = $.ajax({
+        method: "GET",
+        dataType: "xml",
+        url: "http://www.dictionaryapi.com/api/v1/references/sd4/xml/" + self.name + "?key=26e14c56-3fef-4f55-9947-58488d5a1a24",
+        timeout: 10000,
+      });
+      request.done(function(data) {
+        var xml = $(data);
+        var entry = xml.find('entry[id="' + self.name + '"]');
+        if (!entry) return resolve(data);
+        var sound = entry.find('sound');
+        if (!sound) return resolve(data);
+        var wav = sound.find('wav');
+        console.log("wav is " + wav);
+        if (!wav) return resolve(data);
+        var wavFile = wav.text();
+        if (wavFile) {
+          console.log("found " + wavFile + " for " + self.name);
+          var fileUrl = "http://media.merriam-webster.com/soundc11/" + wavFile.charAt(0) + "/" + wavFile;
+          self.merriamWebsterAudio.push({
+            'fileUrl': fileUrl,
+          });
+        }
+        resolve(data);
+      });
+      request.fail( function(jqXHR, textStatus, errorThrown) {
+        var message = "Error - " + textStatus + ": " + errorThrown;
+        resolve(new Error(message));
+      });
+    });
+    return promise;
+  };
   this.loadWordnikAudio = function() {
     var self = this;
     var promise = new Promise(function(resolve, reject) {
       SPH.user.getURL("http://api.wordnik.com:80/v4/word.json/" + self.name + "/audio", {})
       .then(function(data) {
         self.wordnikAudio = data;
-        resolve(data);
+        if (self.hasAudio()) {
+          return resolve(data);
+        }
+        self.loadMerriamWebsterEntry("sd4", "26e14c56-3fef-4f55-9947-58488d5a1a24")
+        .then(function(data) {
+          if (self.hasAudio()) {
+            return resolve(data);
+          }
+          self.loadMerriamWebsterEntry("sd3", "f8c5fbfc-a08d-47b1-9494-06b8d70b8f38")
+          .then(function(data) {
+            resolve(data);
+          });
+        });
       })
       .catch(function(error) {
         resolve(error);
@@ -355,61 +446,14 @@ SPH.app = new function() {
   this.loadWordLists = function() {
     SPH.wordLists.load()
     .then(function(data) {
-      console.log("got wordlists");
       SPH.wordLists.show();
     })
     .catch(function(error){
-      console.log("failed got wordlists");
       SPH.wordLists.show();
     });
   };
   this.showPractice = function() {
     $("#practice").show();
-  };
-  this.showWords = function() {
-    var self = this;
-    var list = $("#words");
-    list.empty();
-    list.show();
-    if (!self.words) {
-      list.append("<li>No words found. Load a wordlist first</li>");
-    } else {
-      $.each(self.words, function( index, value ) {
-        var word = value.word;
-        var theme = "c";
-        if (word in self.word) {
-          if (self.word[word].state == "loaded") {
-            if ('wordnikAudio' in self.word[word] && self.word[word]['wordnikAudio'].length > 0) {
-              theme = "a";
-            } else {
-              theme = "b";
-            }
-          }
-        }
-        var li = "<li data-theme='" + theme + "' data-word='" + word + "' data-type='word'>";
-        li += word;
-        li += "</li>";
-        list.append(li);
-      });
-    }
-    self.wordView.listview('refresh');
-  };
-  this.showWord = function(word) {
-    var self = this;
-    var audioData = self.word[word].wordnikAudio;
-    $("#words").hide();
-    var wordDiv = $("#word");
-    wordDiv.empty();
-    wordDiv.show();
-    wordDiv.append("<h1>" + word + "</h1>");
-    if (!audioData || audioData.length < 1) {
-      wordDiv.append("<div>No audio found</div>");
-    } else {
-      $.each(audioData, function( index, value ) {
-        wordDiv.append('<audio controls preload="auto"><source src="' + value.fileUrl + '" type="audio/mpeg"></audio>');
-      });
-    }
-    SPH.loadingDialog.hide();
   };
   this.setupClickHandlers = function() {
     var self = this;
@@ -421,36 +465,12 @@ SPH.app = new function() {
           self.loadWordLists();
           break;
         case "show-words":
-          console.log("show words");
           SPH.wordListManager.showWords();
-          // self.showWords();
           break;
         case "practice":
           self.showPractice();
           break;
       };
-    });
-  };
-  this.loadWordsInBackground = function(data) {
-    var self = this;
-    $.each(data, function( index, value ) {
-      var word = value.word;
-      var url = "http://api.wordnik.com:80/v4/word.json/" + word + "/audio";
-      console.log("getting " + word);
-      var token = SPH.user.getRequest(url, {});
-      self.word[word] = {
-        state: "loading",
-      };
-      token.done(function(data) {
-        console.log("getting " + word + " succeeded");
-        self.word[word].state = "loaded";
-        self.word[word].wordnikAudio = data;
-    	});
-    	token.fail( function(message) {
-        console.log("getting " + word + " failed");
-        self.word[word].state = "failed";
-        console.log("Failure getting " + word + ": " + message);
-    	});
     });
   };
   this.initDialogs = function() {
@@ -526,13 +546,11 @@ SPH.user = new function() {
         timeout: 10000,
       });
     	request.done(function(data) {
-        console.log("got auth token");
         self.authToken = data;
         resolve(data.token);
     	});
     	request.fail( function(jqXHR, textStatus, errorThrown) {
         var message = "Error - " + textStatus + ": " + errorThrown;
-        console.log("get auth token failed " + message);
         reject(new Error(message));
     	});
     });
@@ -554,12 +572,10 @@ SPH.user = new function() {
           timeout: 10000,
         });
       	request.done(function(data) {
-          console.log("got data from " + url);
           resolve(data);
       	});
       	request.fail( function(jqXHR, textStatus, errorThrown) {
           var message = "Error - " + textStatus + ": " + errorThrown;
-          console.log("get url failed " + message);
           reject(new Error(message));
       	});
       })
