@@ -6,13 +6,10 @@
 /** Define a SpellingBeeHelper namespace */
 SPH = {};
 
-// wordlist manages a single wordlist.
-
-SPH.wordList = function(name, permalink) {
-  this.name = name;
-  this.permalink = permalink;
-  this.words = null;
-  this.error = null;
+// wordlistManager manages the words in all wordlists.
+SPH.wordListManager = new function() {
+  this.lists = {};
+  this.currentList = null;
   this.init = function() {
     this.element = $("#words");
     this.view = $("#words").listview();
@@ -20,9 +17,46 @@ SPH.wordList = function(name, permalink) {
   };
   this.setupClickHandlers = function() {
   };
-  this.show = function() {
+  this.showWords = function() {
+    var element = this.element;
+    var view = this.view;
+    if (this.currentList) {
+      this.currentList.show(element, view);
+    } else {
+      element.empty();
+      element.show();
+      element.append("<li>select a wordlist first</li>");
+      view.listview('refresh');
+    }
+  };
+  this.add = function(name, permalink) {
     var self = this;
-    var element = self.element
+    if (!(name in self.lists)) {
+      self.lists[name] = new SPH.wordList(name, permalink);
+    }
+    SPH.loadingDialog.show("loading words in " + name);
+    self.lists[name].load()
+    .then(function(data) {
+      self.currentList = self.lists[name];
+      var attributeName = "theme";
+      $('[data-permalink]').data(attributeName, "a").attr("data-" + attributeName, "a").removeClass("ui-body-b").addClass("ui-body-a");
+      $('[data-permalink="' + self.currentList.permalink + '"]').data(attributeName, "b").attr("data-" + attributeName, "b").removeClass("ui-body-a").addClass("ui-body-b");
+      SPH.loadingDialog.hide();
+    })
+    .catch(function(error) {
+      SPH.loadingDialog.hide();
+      SPH.messageDialog.show(error.message);
+    });
+  };
+};
+
+SPH.wordList = function(name, permalink) {
+  this.name = name;
+  this.permalink = permalink;
+  this.words = null;
+  this.error = null;
+  this.show = function(element, view) {
+    var self = this;
     element.empty();
     element.show();
     if(!self.words) {
@@ -33,13 +67,22 @@ SPH.wordList = function(name, permalink) {
     } else {
       $.each(self.words, function( index, value ) {
         var word = value.word;
-        var li = "<li data-theme='a' data-word='" + word + "' data-type='word'>";
+        var li = "<li ";
+        if (SPH.wordManager.hasAudio(word)) {
+          li += "data-icon='audio'";
+        } else {
+          li += "data-icon='false'";
+        }
+        li += " data-word='" + word + "' data-type='word'>";
+        li += '<a href="#" data-theme="b">';
         li += word;
+        li += "</a>"
+        //li += '<button class="ui-btn ui-btn-inline ui-btn-icon-left ui-icon-audio ui-corner-all"></button>';
         li += "</li>";
         element.append(li);
       });
     }
-    self.view.listview('refresh');
+    view.listview('refresh');
   };
   this.load = function() {
     var self = this;
@@ -53,11 +96,147 @@ SPH.wordList = function(name, permalink) {
       SPH.user.getURL(url, data)
       .then(function(data) {
         self.words = data;
+        var promises = [];
+        $.each(data, function( index, value ) {
+          var word = value.word;
+          promises.push(SPH.wordManager.add(word));
+        });
+        Promise.all(promises)
+        .then(function() {
+          resolve(data);
+        });
+      })
+      .catch(function(error) {
+        self.error = error;
+        reject(error);
+      });
+    });
+    return promise;
+  };
+};
+
+/**
+ * wordManager manages all words.
+ */
+SPH.wordManager = new function() {
+  this.words = {};
+  this.init = function() {
+    this.element = $("#word");
+    this.setupClickHandlers();
+  };
+  this.setupClickHandlers = function() {
+    var self = this;
+    $(document).on("tap", "[data-type='word']", function(e) {
+      var word = $(this).data("word");
+      $("#words").hide();
+      self.showWord(word);
+    });
+  };
+  this.hasAudio = function(name) {
+    var self = this;
+    if (!(name in self.words)) return false;
+    return self.words[name].hasAudio();
+  };
+  this.showWord = function(name) {
+    var self = this;
+    var element = self.element;
+    if (!(name in self.words)) {
+      element.empty().append("<h1>Word: " + name + " is not loaded");
+      element.show();
+      return;
+    }
+    element.empty().append(self.words[name].toHTML());
+    element.show();
+  };
+  this.add = function(name) {
+    console.log("adding " + name);
+    var self = this;
+    var promise = new Promise(function(resolve, reject) {
+      if (name in self.words) return resolve(self.words[name]);
+      self.words[name] = new SPH.word(name);
+      self.words[name].load()
+      .then(function(data) {
         resolve(data);
       })
       .catch(function(error) {
-        this.error = error;
-        reject(error);
+        resolve(error);
+      });
+    });
+    return promise;
+  };
+};
+
+// word is information about one word.
+SPH.word = function(name) {
+  this.name = name;
+  this.wordnikAudio = [];
+  this.definitions = [];
+  this.hasAudio = function() {
+    var self = this;
+    return self.wordnikAudio && self.wordnikAudio.length > 0;
+  };
+  this.toHTML = function() {
+    var self = this;
+    var html = "";
+    html += "<h1>";
+    html += self.name;
+    html += "</h1>";
+    var audioData = self.wordnikAudio;
+    if (!audioData || audioData.length < 1) {
+      html += "<div>No audio found</div>";
+    } else {
+      $.each(audioData, function( index, value ) {
+        html += '<audio controls preload="auto"><source src="' + value.fileUrl + '" type="audio/mpeg"></audio>';
+      });
+    }
+    var definitions = self.wordnikDefinitions;
+    if (!definitions || definitions.length < 1) {
+      html += "<div>No definitions found</div>";
+    } else {
+      $.each(definitions, function( index, value ) {
+        html += "<div>(" + value.partOfSpeech + ") " + value.text + "</div>";
+      });
+    }
+    return html;
+  };
+  this.load = function() {
+    var self = this;
+    console.log("loading " + self.name);
+    var promises = [];
+    promises.push(self.loadWordnikAudio());
+    promises.push(self.loadWordnikDefinitions());
+    var promise = new Promise(function(resolve, reject) {
+      Promise.all(promises)
+      .then(function(data) {
+        resolve(data);
+      });
+    });
+    return promise;
+  };
+  this.loadWordnikDefinitions = function () {
+    var self = this;
+    var promise = new Promise(function(resolve, reject) {
+      SPH.user.getURL("http://api.wordnik.com:80/v4/word.json/" + self.name + "/definitions", {})
+      .then(function(data) {
+        self.wordnikDefinitions = data;
+        resolve(data);
+      })
+      .catch(function(error) {
+        resolve(error);
+      });
+    });
+    return promise;
+  };
+  this.loadWordnikAudio = function() {
+    var self = this;
+    var promise = new Promise(function(resolve, reject) {
+      SPH.user.getURL("http://api.wordnik.com:80/v4/word.json/" + self.name + "/audio", {})
+      .then(function(data) {
+        self.wordnikAudio = data;
+        resolve(data);
+      })
+      .catch(function(error) {
+        resolve(error);
       });
     });
     return promise;
@@ -69,7 +248,6 @@ SPH.wordLists = new function() {
   this.wordListsData = null;
   this.lists = {};
   this.error = null;
-  this.currentList = null;
   this.init = function() {
     this.element = $("#wordlists");
     this.view = $("#wordlists").listview();
@@ -80,31 +258,8 @@ SPH.wordLists = new function() {
     $(document).on("tap", "[data-type='wordlist']", function(e) {
       var permalink = $(this).data("permalink");
       var name = $(this).data("name");
-      if (!(name in self.lists)) {
-        self.lists[name] = new SPH.wordList(name, permalink);
-        self.lists[name].init();
-      }
-      SPH.loadingDialog.show("loading words in " + name);
-      self.lists[name].load()
-      .then(function(data) {
-        self.currentList = self.lists[name];
-        var attributeName = "theme";
-        $('[data-permalink]').data(attributeName, "a").attr("data-" + attributeName, "a").removeClass("ui-body-b").addClass("ui-body-a");
-        $('[data-permalink="' + self.currentList.permalink + '"]').data(attributeName, "b").attr("data-" + attributeName, "b").removeClass("ui-body-a").addClass("ui-body-b");
-        SPH.loadingDialog.hide();
-      })
-      .catch(function(error) {
-        SPH.loadingDialog.hide();
-        SPH.messageDialog.show(error.message);
-      });
+      SPH.wordListManager.add(name, permalink);
     });
-  };
-  this.showWords = function() {
-    if (this.currentList) {
-      this.currentList.show();
-    } else {
-      console.log("words not loaded");
-    }
   };
   this.show = function() {
     var self = this;
@@ -119,7 +274,7 @@ SPH.wordLists = new function() {
     } else {
       $.each(self.wordListsData, function( index, value ) {
         var theme = "a";
-        if (self.currentList && value.permalink == self.currentList.permalink) {
+        if (SPH.wordListManager.currentList && value.permalink == SPH.wordListManager.currentList.permalink) {
           theme = "b";
         }
         var li = "<li data-theme='" + theme + "' data-name='" + value.name + "' data-type='wordlist' data-permalink='" + value.permalink + "'>";
@@ -191,6 +346,8 @@ SPH.app = new function() {
     this.wordView = $("#words").listview();
     this.initDialogs();
     SPH.wordLists.init();
+    SPH.wordListManager.init();
+    SPH.wordManager.init();
     this.setupClickHandlers();
     $("[data-type='content']").hide();
     this.loadWordLists();
@@ -265,39 +422,13 @@ SPH.app = new function() {
           break;
         case "show-words":
           console.log("show words");
-          SPH.wordLists.showWords();
+          SPH.wordListManager.showWords();
           // self.showWords();
           break;
         case "practice":
           self.showPractice();
           break;
       };
-    });
-    $(document).on("tap", "[data-type='word']", function(e) {
-      var word = $(this).data("word");
-      SPH.loadingDialog.show("Loading " + word);
-      if (word in self.word) {
-        if (self.word[word].state == "loaded") {
-          self.showWord(word);
-          return
-        }
-        if (self.word[word].state == "loading") return;
-      }
-      var url = "http://api.wordnik.com:80/v4/word.json/" + word + "/audio";
-      var token = SPH.user.getRequest(url, {});
-      self.word[word] = {
-        state: "loading",
-      };
-      token.done(function(data) {
-        self.word[word].state = "loaded";
-        self.word[word].wordnikAudio = data;
-        self.showWord(word);
-    	});
-    	token.fail( function(message) {
-        self.word[word].state = "failed";
-        SPH.loadingDialog.hide();
-        SPH.messageDialog.show(message);
-    	});
     });
   };
   this.loadWordsInBackground = function(data) {
@@ -376,28 +507,6 @@ SPH.dialog = function(container) {
     $("#" + this.container).popup("close");
     $("#all-content").removeClass("ui-disabled");
   }
-};
-
-/**
- * SPH.word represents a single word.
- */
-SPH.word = new function(name) {
-  this.name = name;
-  this.promises = [];
-  this.load = function() {
-
-  };
-  this.loadWordnikAudio = function() {
-    var self = this;
-    var url = "http://api.wordnik.com:80/v4/word.json/" + self.name + "/audio";
-    var token = SPH.user.getRequest(url, {});
-    token.done(function(data) {
-      this.wordnikAudio = data;
-    });
-    token.fail( function(message) {
-      this.wordnikAudio = null;
-    });
-  };
 };
 
 SPH.user = new function() {
