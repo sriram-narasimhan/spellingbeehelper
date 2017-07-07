@@ -70,6 +70,7 @@ SPH.wordListManager = new function() {
     element.empty();
     if (this.currentList) {
       this.currentList.showRandomPracticeWord(element);
+      $("#answer").focus();
     } else {
       element.append("<h1>select a wordlist first</h1>");
     }
