@@ -21,8 +21,16 @@
     <div id="main-content" data-role="main" class="ui-content">
       <ul id="wordlists" data-type="content" data-role="listview" data-inset="true">
   		</ul>
-      <ul id="words" data-type="content" data-role="listview" data-inset="true">
-  		</ul>
+      <div id="words-container" data-type="content">
+        <fieldset data-role="controlgroup" data-type="horizontal">
+        <legend>Words to Show:</legend>
+          <label for="audio">With Audio</label>
+          <input type="radio" name="filter" id="audio" value="audio" checked>
+          <label for="all">All</label>
+          <input type="radio" name="filter" id="all" value="all">
+        </fieldset>
+        <div id="words-list-container"></div>
+      </div>
       <div id="word" data-type="content">
       </div>
       <div id="practice" data-type="content">

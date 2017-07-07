@@ -5,9 +5,20 @@ api_version: 1
 threadsafe: true
 
 handlers:
+- url: /urlexists
+  script: urlexists.app
+
 - url: (.*)/
   static_files: static\1/index.html
   upload: static/index.html
 
 - url: /
   static_dir: static
+
+# [START libraries]
+libraries:
+- name: webapp2
+  version: latest
+- name: jinja2
+  version: latest
+# [END libraries]

@@ -11,22 +11,85 @@ SPH.wordListManager = new function() {
   this.lists = {};
   this.currentList = null;
   this.init = function() {
-    this.element = $("#words");
-    this.view = $("#words").listview();
+    this.element = $("#words-container");
+    this.listElement = $("#words-list-container");
     this.setupClickHandlers();
   };
   this.setupClickHandlers = function() {
+    var self = this;
+    $(":input[name= 'filter']").on('change', function(){
+      var clicked = $(this).val();
+      if (clicked == "all") {
+        $("li[data-icon]").show();
+      } else {
+        $("li[data-icon]").hide();
+        $("li[data-icon='audio']").show();
+      }
+    });
+    $(document).on("tap", "#check-answer", function(e) {
+      self.checkAnswer();
+    });
+    $(document).on("keypress", "#answer", function(e) {
+      if (e.which === 13) {
+        self.checkAnswer();
+        e.preventDefault();
+      }
+    });
+    $(document).on("tap", "#next-word", function(e) {
+      self.showPractice();
+    });
+    $(document).on("swipeleft", "#practice", function() {
+      self.showPractice();
+    });
+    $(document).on("swiperight", "#practice", function() {
+      self.showPractice();
+    });
+  };
+  this.checkAnswer = function() {
+    var input = $("#answer");
+    var answer = input.val();
+    var actual = $("#reveal-answer").data("word");
+    var icon = "delete";
+    var backgroundColor = "red";
+    if (actual == answer) {
+      icon = "check";
+      backgroundColor = "green";
+    }
+    var html = '<a style="background: ';
+    html += backgroundColor;
+    html += '; color: white;" class="ui-btn ui-icon-';
+    html += icon;
+    html += ' ui-btn-icon-right">';
+    html += actual;
+    html += '</a>';
+    $("#reveal-answer").empty().append(html);
+  };
+  this.showPractice = function() {
+    var element = $("#practice");
+    element.show();
+    element.empty();
+    if (this.currentList) {
+      this.currentList.showRandomPracticeWord(element);
+    } else {
+      element.append("<h1>select a wordlist first</h1>");
+    }
   };
   this.showWords = function() {
     var element = this.element;
-    var view = this.view;
+    var listElement = this.listElement;
     if (this.currentList) {
-      this.currentList.show(element, view);
+      this.currentList.show(element, listElement);
+      var clicked = $(":input[name= 'filter']").val();
+      if (clicked == "all") {
+        $("li[data-icon]").show();
+      } else {
+        $("li[data-icon]").hide();
+        $("li[data-icon='audio']").show();
+      }
     } else {
-      element.empty();
       element.show();
-      element.append("<li>select a wordlist first</li>");
-      view.listview('refresh');
+      listElement.empty();
+      listElement.append("<h1>select a wordlist first</h1>");
     }
   };
   this.add = function(name, permalink) {
@@ -54,17 +117,38 @@ SPH.wordList = function(name, permalink) {
   this.name = name;
   this.permalink = permalink;
   this.words = null;
+  this.wordsWithAudio = [];
   this.error = null;
-  this.show = function(element, view) {
+  this.showRandomPracticeWord = function(element) {
     var self = this;
-    element.empty();
+    if (self.wordsWithAudio.length > 0) {
+      var min = 0;
+      var max = self.wordsWithAudio.length - 1;
+      var index = Math.floor(Math.random()*(max-min+1)+min);;
+      var word = self.wordsWithAudio[index];
+      var html = "";
+      html += '<label for="basic">Enter word spelling:</label>';
+      html += '<input type="text" name="name" id="answer" value="" data-mini="true" data-clear-btn="true">';
+      html += '<button id="check-answer" class="ui-btn ui-btn-inline ui-mini ui-shadow ui-corner-all">Check</button>';
+      html += '<button id="next-word" class="ui-btn ui-btn-inline ui-mini ui-shadow ui-corner-all">Next Word</button>';
+      html += SPH.wordManager.getPracticeWordHTML(word);
+      element.append(html);
+    } else {
+      element.append("<h1>No words with audio found</h1>");
+    }
+  };
+  this.show = function(element, listElement) {
+    var self = this;
     element.show();
+    listElement.empty();
     if(!self.words) {
-      element.append("<li>The list of words has not been loaded.</li>");
+      listElement.append("<h1>The list of words has not been loaded.</h1>");
       if (self.error) {
-        element.append("<li>" + self.error.message + "</li>");
+        listElement.append("<h2>" + self.error.message + "</h2>");
       }
     } else {
+      var html = "";
+      html += '<ul id="words" data-type="content" data-role="listview" data-inset="true">';
       $.each(self.words, function( index, value ) {
         var word = value.word;
         var li = "<li ";
@@ -77,12 +161,13 @@ SPH.wordList = function(name, permalink) {
         li += '<a href="#" data-theme="b">';
         li += word;
         li += "</a>"
-        //li += '<button class="ui-btn ui-btn-inline ui-btn-icon-left ui-icon-audio ui-corner-all"></button>';
         li += "</li>";
-        element.append(li);
+        html += li;
       });
+      html += "</ul>";
+      listElement.append(html);
+      $("#words").listview().listview('refresh');
     }
-    view.listview('refresh');
   };
   this.load = function() {
     var self = this;
@@ -103,6 +188,13 @@ SPH.wordList = function(name, permalink) {
         });
         Promise.all(promises)
         .then(function() {
+          self.wordsWithAudio = [];
+          $.each(self.words, function( index, value ) {
+            var word = value.word;
+            if (SPH.wordManager.hasAudio(word)) {
+              self.wordsWithAudio.push(word);
+            }
+          });
           resolve(data);
         });
       })
@@ -128,7 +220,7 @@ SPH.wordManager = new function() {
     var self = this;
     $(document).on("tap", "[data-type='word']", function(e) {
       var word = $(this).data("word");
-      $("#words").hide();
+      $("#words-container").hide();
       self.showWord(word);
     });
   };
@@ -136,6 +228,13 @@ SPH.wordManager = new function() {
     var self = this;
     if (!(name in self.words)) return false;
     return self.words[name].hasAudio();
+  };
+  this.getPracticeWordHTML = function(name) {
+    var self = this;
+    if (!(name in self.words)) {
+      return "<h1>Word: " + name + " is not loaded";
+    }
+    return self.words[name].toHTML(true, false);
   };
   this.showWord = function(name) {
     var self = this;
@@ -145,7 +244,7 @@ SPH.wordManager = new function() {
       element.show();
       return;
     }
-    element.empty().append(self.words[name].toHTML());
+    element.empty().append(self.words[name].toHTML(false, true));
     element.show();
   };
   this.add = function(name) {
@@ -168,32 +267,63 @@ SPH.wordManager = new function() {
 // word is information about one word.
 SPH.word = function(name) {
   this.name = name;
+  this.googleAudio = [];
   this.wordnikAudio = [];
   this.merriamWebsterAudio = [];
   this.definitions = [];
   this.hasAudio = function() {
     var self = this;
-    return (self.wordnikAudio && self.wordnikAudio.length > 0) || (self.merriamWebsterAudio && self.merriamWebsterAudio.length > 0);
+    return self.googleAudio.length > 0 || self.wordnikAudio.length > 0 || self.merriamWebsterAudio.length > 0;
   };
-  this.toHTML = function() {
+  this.toHTML = function(autoplay, showName) {
     var self = this;
     var html = "";
-    html += "<h1>";
-    html += self.name;
-    html += "</h1>";
-    var audioData = self.wordnikAudio;
+    if (showName) {
+      html += "<h1>";
+      html += self.name;
+      html += "</h1>";
+    } else {
+      html += "<div id='reveal-answer' data-word='" + self.name + "'></div>";
+    }
     if (!self.hasAudio()) {
       html += "<div>No audio found</div>";
     }
-    if (audioData && audioData.length > 0) {
-      $.each(audioData, function( index, value ) {
-        html += '<audio controls preload="auto"><source src="' + value.fileUrl + '" type="audio/mpeg"></audio>';
+    var autoplaySelected = false;
+    if (self.googleAudio.length > 0) {
+      $.each(self.googleAudio, function( index, value ) {
+        html += '<audio controls ';
+        if (autoplay && !autoplaySelected) {
+          html += "autoplay";
+          autoplaySelected = true;
+        }
+        html += '><source src="' + value.fileUrl + '" type="audio/mpeg"></audio>';
       });
-    }
-    audioData = self.merriamWebsterAudio;
-    if (audioData && audioData.length > 0) {
-      $.each(audioData, function( index, value ) {
-        html += '<audio controls preload="auto"><source src="' + value.fileUrl + '" type="audio/wav"></audio>';
+    } else if (self.merriamWebsterAudio.length > 0) {
+      $.each(self.merriamWebsterAudio, function( index, value ) {
+        html += '<audio controls ';
+        if (autoplay && !autoplaySelected) {
+          html += "autoplay";
+          autoplaySelected = true;
+        }
+        html += '><source src="' + value.fileUrl + '" type="audio/wav"></audio>';
+      });
+    } else if (self.wordnikAudio.length > 0) {
+      SPH.loadingDialog.show("Loading wordnik Audio " + self.name);
+      self.loadWordnikAudio()
+      .then(function(data) {
+        $.each(self.wordnikAudio, function( index, value ) {
+          html += '<audio controls ';
+          if (autoplay && !autoplaySelected) {
+            html += "autoplay";
+            autoplaySelected = true;
+          }
+          html += '><source src="' + value.fileUrl + '" type="audio/mpeg"></audio>';
+        });
+        SPH.loadingDialog.hide();
+      })
+      .catch(function(error) {
+        html += "<div>No audio found</div>";
+        SPH.loadingDialog.hide();
       });
     }
     var definitions = self.wordnikDefinitions;
@@ -209,7 +339,7 @@ SPH.word = function(name) {
   this.load = function() {
     var self = this;
     var promises = [];
-    promises.push(self.loadWordnikAudio());
+    promises.push(self.loadAudio());
     promises.push(self.loadWordnikDefinitions());
     var promise = new Promise(function(resolve, reject) {
       Promise.all(promises)
@@ -235,13 +365,11 @@ SPH.word = function(name) {
   };
   this.loadMerriamWebsterEntry = function(prefix, key) {
     var self = this;
-    console.log("getting merriam for " + self.name);
     var promise = new Promise(function(resolve, reject) {
       var request = $.ajax({
         method: "GET",
         dataType: "xml",
         url: "http://www.dictionaryapi.com/api/v1/references/" + prefix + "/xml/" + self.name + "?key=" + key,
-        //url: "http://www.dictionaryapi.com/api/v1/references/sd3/xml/" + self.name + "?key=f8c5fbfc-a08d-47b1-9494-06b8d70b8f38",
         timeout: 10000,
       });
       request.done(function(data) {
@@ -251,57 +379,70 @@ SPH.word = function(name) {
         var sound = entry.find('sound');
         if (!sound) return resolve(data);
         var wav = sound.find('wav');
-        console.log("wav is " + wav);
         if (!wav) return resolve(data);
         var wavFile = wav.text();
         if (wavFile) {
-          console.log("found " + wavFile + " for " + self.name);
           var fileUrl = "http://media.merriam-webster.com/soundc11/" + wavFile.charAt(0) + "/" + wavFile;
           self.merriamWebsterAudio.push({
             'fileUrl': fileUrl,
           });
+          resolve(data);
         }
-        resolve(data);
+        reject(data);
       });
       request.fail( function(jqXHR, textStatus, errorThrown) {
         var message = "Error - " + textStatus + ": " + errorThrown;
-        resolve(new Error(message));
+        reject(new Error(message));
       });
     });
     return promise;
   };
-  this.loadMerriamWebsterEntrysd4 = function(prefix, suffix) {
+  this.loadGoogle2Audio = function() {
     var self = this;
-    console.log("getting merriam for " + self.name);
+    var fileUrl = "http://www.gstatic.com/dictionary/static/sounds/de/0/" + self.name + ".mp3";
     var promise = new Promise(function(resolve, reject) {
       var request = $.ajax({
         method: "GET",
-        dataType: "xml",
-        url: "http://www.dictionaryapi.com/api/v1/references/sd4/xml/" + self.name + "?key=26e14c56-3fef-4f55-9947-58488d5a1a24",
+        url : "http://spellingbeehelper.appspot.com/urlexists?url=" + fileUrl,
         timeout: 10000,
       });
       request.done(function(data) {
-        var xml = $(data);
-        var entry = xml.find('entry[id="' + self.name + '"]');
-        if (!entry) return resolve(data);
-        var sound = entry.find('sound');
-        if (!sound) return resolve(data);
-        var wav = sound.find('wav');
-        console.log("wav is " + wav);
-        if (!wav) return resolve(data);
-        var wavFile = wav.text();
-        if (wavFile) {
-          console.log("found " + wavFile + " for " + self.name);
-          var fileUrl = "http://media.merriam-webster.com/soundc11/" + wavFile.charAt(0) + "/" + wavFile;
-          self.merriamWebsterAudio.push({
+        if (data.exists) {
+          self.googleAudio.push({
             'fileUrl': fileUrl,
           });
+          return resolve(fileUrl);
         }
-        resolve(data);
+        reject(new Error("google2 audio not found"));
       });
       request.fail( function(jqXHR, textStatus, errorThrown) {
         var message = "Error - " + textStatus + ": " + errorThrown;
-        resolve(new Error(message));
+        reject(new Error(message));
+      });
+    });
+    return promise;
+  };
+  this.loadGoogleAudio = function() {
+    var self = this;
+    var fileUrl = "https://ssl.gstatic.com/dictionary/static/sounds/oxford/" + self.name + "--_us_1.mp3";
+    var promise = new Promise(function(resolve, reject) {
+      var request = $.ajax({
+        method: "GET",
+        url : "http://spellingbeehelper.appspot.com/urlexists?url=" + fileUrl,
+        timeout: 10000,
+      });
+      request.done(function(data) {
+        if (data.exists) {
+          self.googleAudio.push({
+            'fileUrl': fileUrl,
+          });
+          return resolve(fileUrl);
+        }
+        reject(new Error("google audio not found"));
+      });
+      request.fail( function(jqXHR, textStatus, errorThrown) {
+        var message = "Error - " + textStatus + ": " + errorThrown;
+        reject(new Error(message));
       });
     });
     return promise;
@@ -312,22 +453,50 @@ SPH.word = function(name) {
       SPH.user.getURL("http://api.wordnik.com:80/v4/word.json/" + self.name + "/audio", {})
       .then(function(data) {
         self.wordnikAudio = data;
-        if (self.hasAudio()) {
+        if (data.length > 0) {
           return resolve(data);
         }
-        self.loadMerriamWebsterEntry("sd4", "26e14c56-3fef-4f55-9947-58488d5a1a24")
-        .then(function(data) {
-          if (self.hasAudio()) {
-            return resolve(data);
-          }
-          self.loadMerriamWebsterEntry("sd3", "f8c5fbfc-a08d-47b1-9494-06b8d70b8f38")
-          .then(function(data) {
-            resolve(data);
-          });
-        });
+        reject(new Error("No Audio"));
       })
       .catch(function(error) {
-        resolve(error);
+        reject(error);
+      });
+    });
+    return promise;
+  };
+  this.loadAudio = function() {
+    var self = this;
+    var promise = new Promise(function(resolve, reject) {
+      self.loadGoogleAudio()
+      .then(function(data) {
+        resolve(data);
+      })
+      .catch(function(error) {
+        self.loadGoogle2Audio()
+        .then(function(data) {
+          resolve(data);
+        })
+        .catch(function(error) {
+          self.loadWordnikAudio()
+          .then(function(data) {
+            resolve(data);
+          })
+          .catch(function(error) {
+            self.loadMerriamWebsterEntry("sd4", "26e14c56-3fef-4f55-9947-58488d5a1a24")
+            .then(function(data) {
+              return resolve(data);
+            })
+            .catch(function(error) {
+              self.loadMerriamWebsterEntry("sd3", "f8c5fbfc-a08d-47b1-9494-06b8d70b8f38")
+              .then(function(data) {
+                resolve(data);
+              })
+              .catch(function(error) {
+                resolve(false);
+              });
+            });
+          });
+        });
       });
     });
     return promise;
@@ -430,11 +599,6 @@ SPH.app = new function() {
     if ( navigator && navigator.splashscreen ) {
       navigator.splashscreen.hide();
     }
-    this.word = {};
-    this.words = null;
-    this.wordListName = "";
-    this.selectedPermalink = "";
-    this.wordView = $("#words").listview();
     this.initDialogs();
     SPH.wordLists.init();
     SPH.wordListManager.init();
@@ -452,9 +616,6 @@ SPH.app = new function() {
       SPH.wordLists.show();
     });
   };
-  this.showPractice = function() {
-    $("#practice").show();
-  };
   this.setupClickHandlers = function() {
     var self = this;
     $(document).on("tap", "[data-type='navbar']", function(e) {
@@ -468,7 +629,7 @@ SPH.app = new function() {
           SPH.wordListManager.showWords();
           break;
         case "practice":
-          self.showPractice();
+          SPH.wordListManager.showPractice();
           break;
       };
     });
