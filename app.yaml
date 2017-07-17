@@ -8,6 +8,12 @@ handlers:
 - url: /urlexists
   script: urlexists.app
 
+- url: /wordlist/.*
+  script: word-list.app
+
+- url: /word/.*
+  script: word.app
+
 - url: (.*)/
   static_files: static\1/index.html
   upload: static/index.html
