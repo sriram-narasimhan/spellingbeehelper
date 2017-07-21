@@ -1,7 +1,11 @@
+import endpoints
 import webapp2
-from google.appengine.ext import endpoints
-from google.appengine.ext import ndb
 from webapp2_extras import json
+
+from google.appengine.api import urlfetch
+from google.appengine.ext import ndb
+
+_WORDNIK_API_KEY = "a2a73e7b926c924fad7001ca3111acd55af2ffabf50eb4ae5"
 
 class WordList(ndb.Model):
     """A single wordlist entry."""
@@ -9,13 +13,21 @@ class WordList(ndb.Model):
     words = ndb.StringProperty(repeated=True)
 
     @classmethod
+    def Has(cls, word_list):
+        """Does the specified word list exist."""
+        entity = WordList.get_by_id(word_list)
+        if entity:
+            return True
+        return False
+
+    @classmethod
     @ndb.transactional_async
-    def Add(cls, word_list):
+    def Add(cls, word_list, words = []):
         """Add a new word list."""
         entity = WordList.get_by_id(word_list)
         if entity:
             return "word list {} already exists".format(word_list)
-        entity = WordList(id=word_list, name=word_list)
+        entity = WordList(id=word_list, name=word_list, words=set(words))
         entity.put()
         return None
 
@@ -64,6 +76,41 @@ class WordList(ndb.Model):
     def ListWords(self):
         """Gets the list of words from a word list."""
         return self.words
+
+class GetWordnikListsHandler(webapp2.RequestHandler):
+  """Get lists from wordnik."""
+  def get(self):
+    word_list = self.request.get("name", '')
+    permalink = self.request.get("permalink", '')
+    if not word_list:
+        raise endpoints.BadRequestException("No wordlist name specified")
+    if not permalink:
+        raise endpoints.BadRequestException("No permalink specified")
+    if WordList.Has(word_list):
+        raise endpoints.ForbiddenException("Wordlist {} already exists".format(word_list))
+    # Authenticate with wordnik
+    username = "deepasriram"
+    password = "sunshine"
+    url = "http://api.wordnik.com:80/v4/account.json/authenticate/{}?password={}&api_key={}".format(username, password, _WORDNIK_API_KEY)
+    result = urlfetch.fetch(url)
+    if result.status_code == 200:
+        auth_token = json.decode(result.content)["token"]
+    else:
+        raise endpoints.UnauthorizedException("Bad status code {} from wordnik authentication: {}".format(result.status_code, result.content))
+
+    # Get words from wordnik
+    url = "http://api.wordnik.com:80/v4/wordList.json/{}/words?api_key={}&auth_token={}".format(permalink, _WORDNIK_API_KEY, auth_token)
+    result = urlfetch.fetch(url)
+    if result.status_code != 200:
+        raise endpoints.UnauthorizedException("Bad status code {} when trying to get words for permalink {}: {}".format(result.status_code, permalink, result.content))
+
+    words = []
+    for item in json.decode(result.content):
+        words.append(item["word"])
+    message = WordList.Add(word_list, words).get_result()
+    if message:
+        raise endpoints.InternalServerErrorException(message)
+    self.response.write("Successfully added new word list {} with {} words".format(word_list, len(words)))
 
 class AddListHandler(webapp2.RequestHandler):
   """Add a new word list."""
@@ -238,5 +285,6 @@ app = webapp2.WSGIApplication([
     ('/wordlist/add-words', AddWordsHandler),
     ('/wordlist/remove-words', RemoveWordsHandler),
     ('/wordlist/get-words', GetWordsHandler),
+    ('/wordlist/get-wordnik-lists', GetWordnikListsHandler),
 ], debug=True)
 # [END app]
