@@ -9,7 +9,7 @@ handlers:
   script: urlexists.app
 
 - url: /wordlist/.*
-  script: word-list.app
+  script: word_list.app
 
 - url: /word/.*
   script: word.app

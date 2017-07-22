@@ -11,6 +11,7 @@ class WordList(ndb.Model):
     """A single wordlist entry."""
     name = ndb.StringProperty()
     words = ndb.StringProperty(repeated=True)
+    numWords = ndb.IntegerProperty()
 
     @classmethod
     def Has(cls, word_list):
@@ -26,8 +27,22 @@ class WordList(ndb.Model):
         """Add a new word list."""
         entity = WordList.get_by_id(word_list)
         if entity:
-            return "word list {} already exists".format(word_list)
-        entity = WordList(id=word_list, name=word_list, words=set(words))
+            raise endpoints.BadRequestException("word list {} already exists".format(word_list))
+        wordSet = set(words)
+        entity = WordList(id=word_list, name=word_list, words=wordSet, numWords=len(wordSet))
+        entity.put()
+        return None
+
+    @classmethod
+    @ndb.transactional_async
+    def Update(cls, word_list, words = []):
+        """Add a new word list."""
+        entity = WordList.get_by_id(word_list)
+        if not entity:
+            entity = WordList(id=word_list, name=word_list)
+        wordSet = set(words)
+        entity.words = wordSet
+        entity.numWords = len(wordSet)
         entity.put()
         return None
 
@@ -77,40 +92,53 @@ class WordList(ndb.Model):
         """Gets the list of words from a word list."""
         return self.words
 
+    @classmethod
+    @ndb.tasklet
+    def AddWordnikList(cls, authToken, name, permalink):
+        # Get words from wordnik
+        url = "http://api.wordnik.com:80/v4/wordList.json/{}/words?api_key={}&auth_token={}&limit=10000".format(permalink, _WORDNIK_API_KEY, authToken)
+        context = ndb.get_context()
+        result = yield context.urlfetch(url)
+        if result.status_code != 200:
+            raise endpoints.UnauthorizedException("Bad status code {} when trying to get words for permalink {}: {}".format(result.status_code, permalink, result.content))
+        items = json.decode(result.content)
+        words = set()
+        for item in items:
+            words.add(item["word"])
+        yield WordList.Update(name, words)
+        raise ndb.Return(len(words))
+
 class GetWordnikListsHandler(webapp2.RequestHandler):
   """Get lists from wordnik."""
   def get(self):
-    word_list = self.request.get("name", '')
-    permalink = self.request.get("permalink", '')
-    if not word_list:
-        raise endpoints.BadRequestException("No wordlist name specified")
-    if not permalink:
-        raise endpoints.BadRequestException("No permalink specified")
-    if WordList.Has(word_list):
-        raise endpoints.ForbiddenException("Wordlist {} already exists".format(word_list))
     # Authenticate with wordnik
     username = "deepasriram"
     password = "sunshine"
     url = "http://api.wordnik.com:80/v4/account.json/authenticate/{}?password={}&api_key={}".format(username, password, _WORDNIK_API_KEY)
     result = urlfetch.fetch(url)
-    if result.status_code == 200:
-        auth_token = json.decode(result.content)["token"]
-    else:
-        raise endpoints.UnauthorizedException("Bad status code {} from wordnik authentication: {}".format(result.status_code, result.content))
-
-    # Get words from wordnik
-    url = "http://api.wordnik.com:80/v4/wordList.json/{}/words?api_key={}&auth_token={}".format(permalink, _WORDNIK_API_KEY, auth_token)
+    if result.status_code != 200:
+        raise endpoints.UnauthorizedException("Bad status code {} when trying to authenticate with wordnik: {}".format(result.status_code, result.content))
+    authToken = json.decode(result.content)["token"]
+    # Get word lists from wordnik
+    url = "http://api.wordnik.com:80/v4/account.json/wordLists?api_key={}&auth_token={}".format(_WORDNIK_API_KEY, authToken)
     result = urlfetch.fetch(url)
     if result.status_code != 200:
-        raise endpoints.UnauthorizedException("Bad status code {} when trying to get words for permalink {}: {}".format(result.status_code, permalink, result.content))
+        raise endpoints.UnauthorizedException("Bad status code {} when trying to get wordlists from wordnik {}: {}".format(result.status_code, permalink, result.content))
 
-    words = []
-    for item in json.decode(result.content):
-        words.append(item["word"])
-    message = WordList.Add(word_list, words).get_result()
-    if message:
-        raise endpoints.InternalServerErrorException(message)
-    self.response.write("Successfully added new word list {} with {} words".format(word_list, len(words)))
+    # Get and add all wordlists in parallel
+    items = json.decode(result.content)
+    futures = {}
+    for item in items:
+        name = item["name"]
+        permalink = item["permalink"]
+        futures[name] = WordList.AddWordnikList(authToken, name, permalink)
+    for name in futures:
+        try:
+            numWords = futures[name].get_result()
+            self.response.write("<p>successfully added wordlist {} with {} words</p>".format(name, numWords))
+        except Exception as e:
+            self.response.write("<p>failed to add wordlist {}: {}</p>".format(name, e))
+    self.response.write("<h1>Done</h1>")
 
 class AddListHandler(webapp2.RequestHandler):
   """Add a new word list."""
