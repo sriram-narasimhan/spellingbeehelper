@@ -87,6 +87,9 @@ SPH.app = new function() {
         case "practice":
           SPH.wordLists.showPractice();
           break;
+        case "learn":
+          SPH.wordLists.showLearn();
+          break;
       };
     });
   };
@@ -107,9 +110,14 @@ SPH.wordList = function(name, numWords) {
   this.words = {};
   this.wordsArray = [];
   this.wordsWithAudioArray = [];
+  this.currentWordIndex = 0;
   this.error = null;
   this.element = $("#words-container");
   this.listElement = $("#words-list-container");
+  this.filter = $(":input[name= 'filter']").val();
+  this.setFilter = function(value) {
+    this.filter = value;
+  };
   this.addWords = function (data) {
     var self = this;
     self.wordsLoaded = true;
@@ -145,7 +153,17 @@ SPH.wordList = function(name, numWords) {
     });
     return promise;
   };
-  this.showPractice = function(element) {
+  this.showPractice = function() {
+    var self = this;
+    self.load()
+    .then(function() {
+      self.showPracticeInternal();
+    })
+    .catch(function() {
+      self.showPracticeInternal();
+    });
+  };
+  this.showPracticeInternal = function(element) {
     var self = this;
     var element = $("#practice");
     element.show();
@@ -161,6 +179,53 @@ SPH.wordList = function(name, numWords) {
       html += '<button id="check-answer" class="ui-btn ui-btn-inline ui-mini ui-shadow ui-corner-all">Check</button>';
       html += '<button id="next-word" class="ui-btn ui-btn-inline ui-mini ui-shadow ui-corner-all">Next Word</button>';
       html += self.getPracticeWordHTML(self.words[word], true, false);
+      element.append(html);
+    } else {
+      element.append("<h1>No words with audio found</h1>");
+    }
+  };
+  this.setIndex = function(index) {
+    var self = this;
+    self.currentWordIndex = index;
+  };
+  this.incrementIndex = function() {
+    var self = this;
+    self.currentWordIndex++;
+    if (self.currentWordIndex >= self.wordsArray.length) {
+      self.currentWordIndex = 0;
+    }
+  };
+  this.decrementIndex = function() {
+    var self = this;
+    self.currentWordIndex--;
+    if (self.currentWordIndex < 0) {
+      self.currentWordIndex = self.wordsArray.length-1;
+    }
+  };
+  this.showLearn = function() {
+    var self = this;
+    self.load()
+    .then(function() {
+      self.showLearnInternal();
+    })
+    .catch(function() {
+      self.showLearnInternal();
+    });
+  };
+  this.showLearnInternal = function() {
+    var self = this;
+    var element = $("#learn");
+    element.show();
+    element.empty();
+    if (self.wordsArray.length > 0) {
+      var min = 0;
+      var max = self.wordsWithAudioArray.length - 1;
+      var index = Math.floor(Math.random()*(max-min+1)+min);;
+      var word = self.wordsArray[self.currentWordIndex];
+      var html = "";
+      html += '<button id="previous-word" class="ui-btn ui-btn-inline ui-mini ui-shadow ui-corner-all">Previous Word</button>';
+      html += '<button id="next-word" class="ui-btn ui-btn-inline ui-mini ui-shadow ui-corner-all">Next Word</button>';
+      html += self.getPracticeWordHTML(self.words[word], false, true);
       element.append(html);
     } else {
       element.append("<h1>No words with audio found</h1>");
@@ -227,6 +292,7 @@ SPH.wordList = function(name, numWords) {
     element.show();
     listElement.empty();
     var words = self.words;
+    self.currentWordIndex = 0;
     if(!self.wordsLoaded) {
       listElement.append("<h1>Words are not loaded.</h1>");
       if (self.error) {
@@ -235,27 +301,26 @@ SPH.wordList = function(name, numWords) {
     } else {
       var html = "";
       html += '<ul id="words" data-type="content" data-role="listview" data-inset="true">';
-      for (var name in words) {
-        word = words[name];
+      $.each(self.wordsArray, function( index, name ) {
+        var word = words[name];
         var li = "<li ";
         if (word.audio && word.audio.length > 0) {
           li += "data-icon='audio'";
         } else {
           li += "data-icon='false'";
         }
-        li += " data-word='" + name + "' data-type='word'>";
+        li += " data-word='" + name + "' data-index=" + index + " data-type='word'>";
         li += '<a href="#" data-theme="b">';
         li += name;
         li += "</a>"
         li += "</li>";
         html += li;
-      };
+      });
       html += "</ul>";
       listElement.append(html);
       $("#words").listview().listview('refresh');
     }
-    var clicked = $(":input[name= 'filter']").val();
-    if (clicked == "all") {
+    if (self.filter == "all") {
       $("li[data-icon]").show();
     } else {
       $("li[data-icon]").hide();
@@ -285,6 +350,7 @@ SPH.wordLists = new function() {
     });
     $(":input[name= 'filter']").on('change', function(){
       var clicked = $(this).val();
+      self.wordLists[self.currentList].setFilter(clicked);
       if (clicked == "all") {
         $("li[data-icon]").show();
       } else {
@@ -301,7 +367,7 @@ SPH.wordLists = new function() {
         e.preventDefault();
       }
     });
-    $(document).on("tap", "#next-word", function(e) {
+    $(document).on("tap", "#practice > #next-word", function(e) {
       self.showPractice();
     });
     $(document).on("swipeleft", "#practice", function() {
@@ -309,6 +375,28 @@ SPH.wordLists = new function() {
     });
     $(document).on("swiperight", "#practice", function() {
       self.showPractice();
+    });
+    $(document).on("tap", "#learn > #next-word", function(e) {
+      self.wordLists[self.currentList].incrementIndex();
+      self.showLearn();
+    });
+    $(document).on("tap", "#learn > #previous-word", function(e) {
+      self.wordLists[self.currentList].decrementIndex();
+      self.showLearn();
+    });
+    $(document).on("swipeleft", "#learn", function() {
+      self.wordLists[self.currentList].decrementIndex();
+      self.showLearn();
+    });
+    $(document).on("swiperight", "#learn", function() {
+      self.wordLists[self.currentList].incrementIndex();
+      self.showLearn();
+    });
+    $(document).on("tap", "[data-type='word']", function(e) {
+      var index = $(this).data("index");
+      self.wordLists[self.currentList].setIndex(index);
+      $('[data-name="learn"]').trigger("click");
+      $('[data-name="learn"]').trigger("tap");
     });
   };
 
@@ -347,6 +435,15 @@ SPH.wordLists = new function() {
       return false;
     } else {
       self.wordLists[self.currentList].showPractice();
+    }
+  };
+  this.showLearn = function() {
+    var self = this;
+    if (!self.currentList) {
+      SPH.messageDialog.show("Select a word list first");
+      return false;
+    } else {
+      self.wordLists[self.currentList].showLearn();
     }
   };
   this.show = function() {
