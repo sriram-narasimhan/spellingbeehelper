@@ -7,7 +7,7 @@
 SPH = {};
 
 SPH.ajax = function(url) {
-  var sitePrefix = "http://localhost:9999";
+  var sitePrefix = "http://spellingbeehelper.appspot.com";
   var promise = new Promise(function(resolve, reject) {
     var request = $.ajax({
       method: "GET",
