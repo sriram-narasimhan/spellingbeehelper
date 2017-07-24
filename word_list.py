@@ -5,6 +5,8 @@ from webapp2_extras import json
 from google.appengine.api import urlfetch
 from google.appengine.ext import ndb
 
+from word import Word
+
 _WORDNIK_API_KEY = "a2a73e7b926c924fad7001ca3111acd55af2ffabf50eb4ae5"
 
 class WordList(ndb.Model):
@@ -88,9 +90,28 @@ class WordList(ndb.Model):
         entity.put()
         return None
 
-    def ListWords(self):
+    def GetWords(self):
         """Gets the list of words from a word list."""
-        return self.words
+        futures = {}
+        for word in self.words:
+            futures[word] = Word.get_by_id_async(word)
+        output = {}
+        for word in futures:
+            try:
+                data = futures[word].get_result()
+                output[word] = {
+                    "name": data.word,
+                    "found": True,
+                    "audio": list(data.audio),
+                    "partsOfSpeech": list(data.partsOfSpeech),
+                    "definitions": list(data.definitions),
+                }
+            except Exception:
+                output[word] = {
+                    "name": word,
+                    "found": False,
+                }
+        return output
 
     @classmethod
     @ndb.tasklet
@@ -107,6 +128,36 @@ class WordList(ndb.Model):
             words.add(item["word"])
         yield WordList.Update(name, words)
         raise ndb.Return(len(words))
+
+    @classmethod
+    def GetWordData(cls, request, response, func):
+        """Gets the information about a word from some source."""
+        word_list = request.get("word_list", '')
+        if not word_list:
+            raise endpoints.BadRequestException("No word list was specified")
+        entity = WordList.get_by_id(word_list)
+        if not entity:
+            raise endpoints.NotFoundException("Word list {} was not found".format(word_list))
+        words = entity.words
+        futures = {}
+        foundWords = []
+        notFoundWords = []
+        for word in words:
+            futures[word] = func(word)
+        for word in futures:
+            try:
+                futures[word].get_result()
+                foundWords.append(word)
+            except Exception as e:
+                notFoundWords.append(word)
+                message = str(e)
+                if len(message) < 100:
+                    response.write("<p>error when adding word {}: {}</p>".format(word, message))
+                else:
+                    response.write("<p>error when adding word {}: error too big to display".format(word))
+        response.write("<h1>Total Words Processed = {}</h1>".format(len(words)))
+        response.write("<h2>Successfully Added = {}</h2>".format(len(foundWords)))
+        response.write("<h2>Words with errors = {}</h2>".format(len(notFoundWords)))
 
 class GetWordnikListsHandler(webapp2.RequestHandler):
   """Get lists from wordnik."""
@@ -196,13 +247,19 @@ class RemoveListHandler(webapp2.RequestHandler):
 class GetListsHandler(webapp2.RequestHandler):
   """Get the list of word lists."""
   def get(self):
+    self.response.headers['Access-Control-Allow-Origin'] = '*'
+    self.response.content_type = 'application/json'
     entries = WordList.List().get_result()
-    names = []
+    lists = {}
     for entry in entries:
-        names.append(entry.name)
+        lists[entry.name] = {
+            "name": entry.name,
+            "words": list(entry.words),
+            "numWords": entry.numWords,
+        }
     obj = {
         "error": False,
-        "names": names
+        "lists": lists,
     }
     self.response.write(json.encode(obj))
 
@@ -282,28 +339,26 @@ class GetWordsHandler(webapp2.RequestHandler):
     self.response.content_type = 'application/json'
     word_list = self.request.get("name", '')
     if not word_list:
-        obj = {
-            "error": True,
-            "message": "No word list name was specified"
-        }
-        self.response.write(json.encode(obj))
-        return
+        raise endpoints.BadRequestException("No word list name was specified")
     entry = WordList.Get(word_list).get_result()
     if not entry:
-        obj = {
-            "error": True,
-            "message": "Cannot find word list with name {}".format(word_list)
-        }
-        self.response.write(json.encode(obj))
-        return
-    words = []
-    for word in entry.ListWords():
-        words.append(word)
-    obj = {
-        "error": False,
-        "words": words
-    }
-    self.response.write(json.encode(obj))
+        raise endpoints.NotFoundException("Cannot find word list with name {}".format(word_list))
+    self.response.write(json.encode(entry.GetWords()))
+
+class GetMerriamAudioHandler(webapp2.RequestHandler):
+  """Gets merriam webster audio for a list of words."""
+  def get(self):
+      WordList.GetWordData(self.request, self.response, Word.AddMerriamWebsterAudioLink)
+
+class GetWordnikDataHandler(webapp2.RequestHandler):
+  """Gets wordnik data for a list of words."""
+  def get(self):
+      WordList.GetWordData(self.request, self.response, Word.AddWordnikDefinition)
+
+class GetGoogleAudioHandler(webapp2.RequestHandler):
+  """Gets google audio for a list of words."""
+  def get(self):
+      WordList.GetWordData(self.request, self.response, Word.AddGoogleAudio)
 
 # [START app]
 app = webapp2.WSGIApplication([
@@ -314,5 +369,8 @@ app = webapp2.WSGIApplication([
     ('/wordlist/remove-words', RemoveWordsHandler),
     ('/wordlist/get-words', GetWordsHandler),
     ('/wordlist/get-wordnik-lists', GetWordnikListsHandler),
+    ('/wordlist/get-merriam-audio', GetMerriamAudioHandler),
+    ('/wordlist/get-wordnik-data', GetWordnikDataHandler),
+    ('/wordlist/get-google-audio', GetGoogleAudioHandler),
 ], debug=True)
 # [END app]

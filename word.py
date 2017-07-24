@@ -10,8 +10,6 @@ from google.appengine.ext.ndb import msgprop
 
 from protorpc import messages
 
-from word_list import WordList
-
 _WORDNIK_API_KEY = "a2a73e7b926c924fad7001ca3111acd55af2ffabf50eb4ae5"
 
 def FindDataBetween(contents, startTag, endTag, startPosition = None):
@@ -181,34 +179,26 @@ class Word(ndb.Model):
         return Word.query().fetch_async()
 
     @classmethod
-    def GetWordData(cls, request, response, func):
-        """Gets the information about a word from some source."""
-        word_list = request.get("word_list", '')
-        if not word_list:
-            raise endpoints.BadRequestException("No word list was specified")
-        entity = WordList.get_by_id(word_list)
-        if not entity:
-            raise endpoints.NotFoundException("Word list {} was not found".format(word_list))
-        words = entity.words
-        futures = {}
-        foundWords = []
-        notFoundWords = []
+    def GetWords(cls, words):
         for word in words:
-            futures[word] = func(word)
+            futures[word] = Word.get_by_id.async()
+        output = {}
         for word in futures:
             try:
-                futures[word].get_result()
-                foundWords.append(word)
-            except Exception as e:
-                notFoundWords.append(word)
-                message = str(e)
-                if len(message) < 100:
-                    response.write("<p>error when adding word {}: {}</p>".format(word, message))
-                else:
-                    response.write("<p>error when adding word {}: error too big to display".format(word))
-        response.write("<h1>Total Words Processed = {}</h1>".format(len(words)))
-        response.write("<h2>Successfully Added = {}</h2>".format(len(foundWords)))
-        response.write("<h2>Words with errors = {}</h2>".format(len(notFoundWords)))
+                data = futures[word].get_result()
+                output[word] = {
+                    "name": data.word,
+                    "found": True,
+                    "audio": list(data.audio),
+                    "partsOfSpeech": list(data.partsOfSpeech),
+                    "definitions": list(data.definitions),
+                }
+            except Exception:
+                output[word] = {
+                    "name": data.word,
+                    "found": False,
+                }
+        return output
 
 class AddHandler(webapp2.RequestHandler):
   """Add a new word."""
@@ -327,29 +317,11 @@ class ListHandler(webapp2.RequestHandler):
     }
     self.response.write(json.encode(obj))
 
-class GetMerriamAudioHandler(webapp2.RequestHandler):
-  """Gets merriam webster audio for a list of words."""
-  def get(self):
-      Word.GetWordData(self.request, self.response, Word.AddMerriamWebsterAudioLink)
-
-class GetWordnikDataHandler(webapp2.RequestHandler):
-  """Gets wordnik data for a list of words."""
-  def get(self):
-      Word.GetWordData(self.request, self.response, Word.AddWordnikDefinition)
-
-class GetGoogleAudioHandler(webapp2.RequestHandler):
-  """Gets google audio for a list of words."""
-  def get(self):
-      Word.GetWordData(self.request, self.response, Word.AddGoogleAudio)
-
 # [START app]
 app = webapp2.WSGIApplication([
     ('/word/add', AddHandler),
     ('/word/add-audio', AddAudioHandler),
     ('/word/remove', RemoveHandler),
     ('/word/list', ListHandler),
-    ('/word/get-merriam-audio', GetMerriamAudioHandler),
-    ('/word/get-wordnik-data', GetWordnikDataHandler),
-    ('/word/get-google-audio', GetGoogleAudioHandler),
 ], debug=True)
 # [END app]

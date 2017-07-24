@@ -1,0 +1,3 @@
+export GOOGLE_APPLICATION_CREDENTIALS='/Users/nsri/Downloads/Spelling Bee-33b400212494.json'
+appcfg.py download_data --url http://localhost:52900/remote_api --file=data.sqlite --application=spellingbeehelper --num_threads=1
+appcfg.py -e mayadeepasriram@gmail.com upload_data --url=http://spellingbeehelper.appspot.com/_ah/remote_api --filename=data.sqlite
