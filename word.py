@@ -15,10 +15,10 @@ _WORDNIK_API_KEY = "a2a73e7b926c924fad7001ca3111acd55af2ffabf50eb4ae5"
 def FindDataBetween(contents, startTag, endTag, startPosition = None):
     start = contents.find(startTag, startPosition)
     if start == -1:
-        raise endpoints.NotFoundException("could not find {} after {} position".format(startTag, startPosition))
+        return False
     end = contents.find(endTag, start + len(startTag))
     if end == -1:
-        raise endpoints.NotFoundException("could not find {} after {} position".format(endTag, start))
+        return False
     return contents[start + len(startTag):end]
 
 @ndb.tasklet
@@ -37,39 +37,64 @@ class Word(ndb.Model):
     definitions = ndb.StringProperty(repeated=True)
     created = ndb.model.DateTimeProperty(auto_now_add=True)
     updated = ndb.model.DateTimeProperty(auto_now=True)
+    processed = ndb.BooleanProperty(default=False)
+    favourite = ndb.BooleanProperty(default=False)
 
-    def Update(self):
-        
+    def GetInfo(self):
+        audio = self.UpdateAudio()
+        definition = self.UpdateDefinition()
+        audio.get_result()
+        definition.get_result()
+        self.processed = True
+        self.put()
+
+    @ndb.tasklet
+    def UpdateAudio(self):
+        audio = yield self.AddDictionaryComAudioLink()
+        if audio:
+            raise ndb.Return(True)
+        audio = yield self.AddMerriamWebsterAudioLink()
+        if audio:
+            raise ndb.Return(True)
+        audio = yield self.AddGoogleAudio()
+        if audio:
+            raise ndb.Return(True)
+        raise ndb.Return(False)
+
+    @ndb.tasklet
+    def UpdateDefinition(self):
+        audio = yield self.AddWordnikDefinition()
+        if audio:
+            raise ndb.Return(True)
+        raise ndb.Return(False)
 
     @classmethod
-    @ndb.transactional_async
     def Add(cls, word, **attributes):
         """Add a new word."""
-        entity = Word.get_by_id(word)
+        name = word.lower()
+        entity = Word.get_by_id(name)
         if entity:
-            raise endpoints.BadRequestException("word {} already exists".format(word))
-        entity = Word(id=word, word=word)
+            return False
+        entity = Word(id=name, word=name)
         for key, value in attributes.items():
             setattr(entity, key, value)
         entity.put()
-        return None
+        return True
 
-    @classmethod
     @ndb.tasklet
-    def AddWordnikDefinition(cls, word):
-        entity = yield Word.get_by_id_async(word)
-        if not entity:
-            entity = Word(id=word, word=word)
+    def AddWordnikDefinition(self):
+        entity = self
+        word = self.word
         if entity.partsOfSpeech and entity.definitions:
-            raise endpoints.ConflictException("Parts of Speech and Definitions for {} already exist so skipping".format(word))
+            raise ndb.Return(True)
         url = "http://api.wordnik.com:80/v4/word.json/{}/definitions?limit=200&includeRelated=false&useCanonical=false&includeTags=false&api_key={}".format(word, _WORDNIK_API_KEY)
         context = ndb.get_context()
         result = yield context.urlfetch(url, deadline=1, follow_redirects=False)
         if result.status_code != 200:
-            raise endpoints.NotFoundException("Bad status code {} when trying to get definitions for word {}: {}".format(result.status_code, word, result.content))
+            raise ndb.Return(False)
         items = json.decode(result.content)
         if not items:
-            raise endpoints.NotFoundException("No data found for {}".format(word))
+            raise ndb.Return(False)
         partsOfSpeech = set()
         definitions = []
         for item in items:
@@ -80,13 +105,12 @@ class Word(ndb.Model):
         entity.partsOfSpeech = list(set(entity.partsOfSpeech).union(partsOfSpeech))
         entity.definitions = list(set(entity.definitions).union(definitions))
         yield entity.put_async()
+        raise ndb.Return(True)
 
-    @classmethod
     @ndb.tasklet
-    def AddGoogleAudio(cls, word):
-        entity = yield Word.get_by_id_async(word)
-        if not entity:
-            entity = Word(id=word, word=word)
+    def AddGoogleAudio(self):
+        entity = self
+        word = self.word
         if entity.audio:
             raise ndb.Return(True)
         url = "https://ssl.gstatic.com/dictionary/static/sounds/oxford/{}--_us_1.mp3".format(word)
@@ -103,12 +127,10 @@ class Word(ndb.Model):
         yield entity.put_async()
         raise ndb.Return(True)
 
-    @classmethod
     @ndb.tasklet
-    def AddDictionaryComAudioLink(cls, word):
-        entity = yield Word.get_by_id_async(word)
-        if not entity:
-            entity = Word(id=word, word=word)
+    def AddDictionaryComAudioLink(self):
+        entity = self
+        word = self.word
         # Ignore if audio already exists
         if entity.audio:
             raise ndb.Return(True)
@@ -122,7 +144,7 @@ class Word(ndb.Model):
         audioPrefix = 'class="main-header'
         start = contents.find(audioPrefix)
         if start == -1:
-            raise endpoints.NotFoundException("could not find {}".format(audioPrefix))
+            raise ndb.Return(False)
         start_tag = '<audio>'
         end_tag = '</audio>'
         audioTags = FindDataBetween(contents, start_tag, end_tag, start)
@@ -132,12 +154,7 @@ class Word(ndb.Model):
         end_tag = '"'
         start = 0
         while True:
-            try:
-                file_name = FindDataBetween(audioTags, start_tag, end_tag, start)
-            except Exception as e:
-                print "could not find file name"
-                raise ndb.Return(False)
-            print "file name is ", file_name
+            file_name = FindDataBetween(audioTags, start_tag, end_tag, start)
             if not file_name:
                 raise ndb.Return(False)
             start = audioTags.find(start_tag, start)
@@ -153,10 +170,9 @@ class Word(ndb.Model):
 
     @classmethod
     @ndb.tasklet
-    def AddMerriamWebsterAudioLink(cls, word):
-        entity = yield Word.get_by_id_async(word)
-        if not entity:
-            entity = Word(id=word, word=word)
+    def AddMerriamWebsterAudioLink(self):
+        entity = self
+        word = self.word
         # Ignore if audio already exists
         if entity.audio:
             raise ndb.Return(True)
@@ -281,46 +297,33 @@ class AddHandler(webapp2.RequestHandler):
         }
     self.response.write(json.encode(obj))
 
-class AddAudioHandler(webapp2.RequestHandler):
+class MakeFavouriteHandler(webapp2.RequestHandler):
   """Adds a audio to a word."""
-  def post(self):
+  def get(self):
     self.response.headers['Access-Control-Allow-Origin'] = '*'
     self.response.content_type = 'application/json'
     word = self.request.get("word", '')
     if not word:
-        obj = {
-            "error": True,
-            "message": "No word was specified"
-        }
-        self.response.write(json.encode(obj))
-        return
-    source = self.request.get("source", '')
-    if not source:
-        obj = {
-            "error": True,
-            "message": "No audio source was specified"
-        }
-        self.response.write(json.encode(obj))
-        return
-    link = self.request.get("link", '')
-    if not link:
-        obj = {
-            "error": True,
-            "message": "No audio link was specified"
-        }
-        self.response.write(json.encode(obj))
-        return
-    message = Word.AddAudio(word, source, link).get_result()
-    if message:
-        obj = {
-            "error": True,
-            "message": "Error adding audio with source {} and link {} to word {}: {}".format(source, link, word, message)
-        }
+        raise endpoints.BadRequestException("word was not specified")
+    favourite = self.request.get("favourite", '')
+    if not favourite:
+        raise endpoints.BadRequestException("favourite was not specified")
+    favourite = favourite.lower()
+    if favourite == "false":
+        favourite_value = False
+    elif favourite == "true":
+        favourite_value = True
     else:
-        obj = {
-            "error": False,
-            "message": "Successfully added audio with source {} and link {} to word {}".format(source, link, word)
-        }
+        raise endpoints.BadRequestException("favourite {} is not one of false or true".format(favourite))
+    entity = Word.get_by_id(word)
+    if not entity:
+        raise endpoints.NotFoundException("word {} could not be found".format(word))
+    entity.favourite = favourite_value
+    entity.put()
+    obj = {
+        "error": False,
+        "message": "Set word {} favourite value to {}".format(word, favourite)
+    }
     self.response.write(json.encode(obj))
 
 class RemoveHandler(webapp2.RequestHandler):
@@ -372,11 +375,26 @@ class ListHandler(webapp2.RequestHandler):
     }
     self.response.write(json.encode(obj))
 
+class GetDataHandler(webapp2.RequestHandler):
+  """Gets data for some words."""
+  def get(self):
+    messages = []
+    try:
+        query = Word.query().filter(Word.processed == False)
+        words = query.fetch(100)
+        for word in words:
+            word.GetInfo()
+            messages.append("updated word {}".format(word.word))
+    except Exception as e:
+        messages.append(str(e))
+    self.response.write("<br/>".join(messages))
+
 # [START app]
 app = webapp2.WSGIApplication([
     ('/word/add', AddHandler),
-    ('/word/add-audio', AddAudioHandler),
     ('/word/remove', RemoveHandler),
     ('/word/list', ListHandler),
+    ('/word/get-data', GetDataHandler),
+    ('/word/make-favourite', MakeFavouriteHandler),
 ], debug=True)
 # [END app]

@@ -109,6 +109,7 @@ class WordList(ndb.Model):
                 output[word] = {
                     "name": data.word,
                     "found": True,
+                    "favourite": data.favourite,
                     "audio": list(data.audio),
                     "partsOfSpeech": list(data.partsOfSpeech),
                     "definitions": list(data.definitions),
@@ -203,10 +204,7 @@ class UpdateWordsHandler(webapp2.RequestHandler):
                 messages.append("could not find list with name {}".format(name))
             else:
                 for word in wordlist.words:
-                    entity = Word.get_by_id(word)
-                    if not entity:
-                        entity = Word(id=word, word=word)
-                        entity.put()
+                    Word.Add(word)
                 messages.append("added {} words for wordlist {}".format(wordlist.numWords, name))
             memcache.replace(listCacheName, lists)
     except Exception as e:
