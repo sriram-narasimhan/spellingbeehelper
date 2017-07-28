@@ -1,7 +1,12 @@
+import datetime
+from dateutil.parser import parse
+from dateutil.tz import *
+
 import endpoints
 import webapp2
 from webapp2_extras import json
 
+from google.appengine.api import memcache
 from google.appengine.api import urlfetch
 from google.appengine.ext import ndb
 
@@ -14,6 +19,8 @@ class WordList(ndb.Model):
     name = ndb.StringProperty()
     words = ndb.StringProperty(repeated=True)
     numWords = ndb.IntegerProperty()
+    created = ndb.model.DateTimeProperty(auto_now_add=True)
+    updated = ndb.model.DateTimeProperty(auto_now=True)
 
     @classmethod
     def Has(cls, word_list):
@@ -159,37 +166,106 @@ class WordList(ndb.Model):
         response.write("<h2>Successfully Added = {}</h2>".format(len(foundWords)))
         response.write("<h2>Words with errors = {}</h2>".format(len(notFoundWords)))
 
+class UpdateWordsHandler(webapp2.RequestHandler):
+  """Update words from wordlists from wordnik."""
+  def get(self):
+    try:
+        # Check memcache
+        listCacheName = "word-lists"
+        dateCacheName = "word-lists-last-processed"
+        last_processed = memcache.get(dateCacheName)
+        lists = memcache.get(listCacheName)
+        messages = []
+        if not lists:
+            if lists is None:
+                memcache.add(listCacheName, [])
+            if last_processed:
+                query = WordList.query(WordList.updated >= last_processed)
+            else:
+                query = WordList.query()
+            results = query.fetch()
+            lists = []
+            for result in results:
+                lists.append(result.name)
+            memcache.replace(listCacheName, lists)
+            if last_processed is None:
+                memcache.add(dateCacheName, datetime.datetime.now())
+            else:
+                memcache.replace(dateCacheName, datetime.datetime.now())
+            messages.append("retrieved and cached wordlists {}".format(lists))
+        else:
+            messages.append("cached wordlists {} already exist".format(lists))
+
+        while lists:
+            name = lists.pop()
+            wordlist = WordList.get_by_id(name)
+            if not wordlist:
+                messages.append("could not find list with name {}".format(name))
+            else:
+                for word in wordlist.words:
+                    entity = Word.get_by_id(word)
+                    if not entity:
+                        entity = Word(id=word, word=word)
+                        entity.put()
+                messages.append("added {} words for wordlist {}".format(wordlist.numWords, name))
+            memcache.replace(listCacheName, lists)
+    except Exception as e:
+        messages.append(str(e))
+    self.response.write("<br/>".join(messages))
+
 class GetWordnikListsHandler(webapp2.RequestHandler):
   """Get lists from wordnik."""
   def get(self):
-    # Authenticate with wordnik
-    username = "deepasriram"
-    password = "sunshine"
-    url = "http://api.wordnik.com:80/v4/account.json/authenticate/{}?password={}&api_key={}".format(username, password, _WORDNIK_API_KEY)
-    result = urlfetch.fetch(url)
-    if result.status_code != 200:
-        raise endpoints.UnauthorizedException("Bad status code {} when trying to authenticate with wordnik: {}".format(result.status_code, result.content))
-    authToken = json.decode(result.content)["token"]
-    # Get word lists from wordnik
-    url = "http://api.wordnik.com:80/v4/account.json/wordLists?api_key={}&auth_token={}".format(_WORDNIK_API_KEY, authToken)
-    result = urlfetch.fetch(url)
-    if result.status_code != 200:
-        raise endpoints.UnauthorizedException("Bad status code {} when trying to get wordlists from wordnik {}: {}".format(result.status_code, permalink, result.content))
+    try:
+        # Authenticate with wordnik
+        username = "deepasriram"
+        password = "sunshine"
+        url = "http://api.wordnik.com:80/v4/account.json/authenticate/{}?password={}&api_key={}".format(username, password, _WORDNIK_API_KEY)
+        result = urlfetch.fetch(url)
+        if result.status_code != 200:
+            raise endpoints.UnauthorizedException("Bad status code {} when trying to authenticate with wordnik: {}".format(result.status_code, result.content))
+        authToken = json.decode(result.content)["token"]
 
-    # Get and add all wordlists in parallel
-    items = json.decode(result.content)
-    futures = {}
-    for item in items:
-        name = item["name"]
-        permalink = item["permalink"]
-        futures[name] = WordList.AddWordnikList(authToken, name, permalink)
-    for name in futures:
-        try:
-            numWords = futures[name].get_result()
-            self.response.write("<p>successfully added wordlist {} with {} words</p>".format(name, numWords))
-        except Exception as e:
-            self.response.write("<p>failed to add wordlist {}: {}</p>".format(name, e))
-    self.response.write("<h1>Done</h1>")
+        # Check memcache
+        listCacheName = "wordnik-lists"
+        dateCacheName = "wordnik-lists-last-processed"
+        lists = memcache.get(listCacheName)
+        messages = []
+        if not lists:
+            if lists is None:
+                memcache.add(listCacheName, {})
+            # Get word lists from wordnik
+            url = "http://api.wordnik.com:80/v4/account.json/wordLists?api_key={}&auth_token={}".format(_WORDNIK_API_KEY, authToken)
+            result = urlfetch.fetch(url)
+            if result.status_code != 200:
+                raise endpoints.UnauthorizedException("Bad status code {} when trying to get wordlists from wordnik {}: {}".format(result.status_code, permalink, result.content))
+            # Get and add all wordlists in parallel
+            items = json.decode(result.content)
+            lists = {}
+            last_processed = memcache.get(dateCacheName)
+            for item in items:
+                last_activity = parse(item["lastActivityAt"])
+                if not last_processed or last_activity > last_processed:
+                    lists[item["permalink"]] = item["name"]
+            memcache.replace("wordnik-lists", lists)
+            if last_processed is None:
+                memcache.add(dateCacheName, datetime.datetime.now(tzlocal()))
+            else:
+                memcache.replace(dateCacheName, datetime.datetime.now(tzlocal()))
+            messages.append("retrieved lists {} to process".format(lists))
+        else:
+            messages.append("found existing lists {} to process".format(lists))
+        while lists:
+            permalink, name = lists.popitem()
+            try:
+                WordList.AddWordnikList(authToken, name, permalink).get_result()
+                messages.append("Added wordlist {} successfully".format(name))
+            except Exception as e:
+                messages.append("Failed to add wordlist {} : {}".format(name, str(e)))
+            memcache.replace(listCacheName, lists)
+        self.response.write("<br/>".join(messages))
+    except Exception as e:
+        messages.append(str(e))
 
 class AddListHandler(webapp2.RequestHandler):
   """Add a new word list."""
@@ -360,6 +436,17 @@ class GetGoogleAudioHandler(webapp2.RequestHandler):
   def get(self):
       WordList.GetWordData(self.request, self.response, Word.AddGoogleAudio)
 
+class GetDictionaryComAudioHandler(webapp2.RequestHandler):
+  """Gets DictionaryCom audio for a list of words."""
+  def get(self):
+      word = self.request.get("word", '')
+      if not word:
+          self.response.write("no word specified")
+          return
+      link = Word.AddDictionaryComAudioLink(word).get_result()
+      self.response.write(link)
+      # WordList.GetWordData(self.request, self.response, Word.AddDictionaryComAudio)
+
 # [START app]
 app = webapp2.WSGIApplication([
     ('/wordlist/add-list', AddListHandler),
@@ -369,8 +456,10 @@ app = webapp2.WSGIApplication([
     ('/wordlist/remove-words', RemoveWordsHandler),
     ('/wordlist/get-words', GetWordsHandler),
     ('/wordlist/get-wordnik-lists', GetWordnikListsHandler),
+    ('/wordlist/update-words', UpdateWordsHandler),
     ('/wordlist/get-merriam-audio', GetMerriamAudioHandler),
     ('/wordlist/get-wordnik-data', GetWordnikDataHandler),
     ('/wordlist/get-google-audio', GetGoogleAudioHandler),
+    ('/wordlist/get-dictionary-com-audio', GetDictionaryComAudioHandler),
 ], debug=True)
 # [END app]

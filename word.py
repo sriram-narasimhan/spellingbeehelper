@@ -35,6 +35,11 @@ class Word(ndb.Model):
     audio = ndb.StringProperty(repeated=True)
     partsOfSpeech = ndb.StringProperty(repeated=True)
     definitions = ndb.StringProperty(repeated=True)
+    created = ndb.model.DateTimeProperty(auto_now_add=True)
+    updated = ndb.model.DateTimeProperty(auto_now=True)
+
+    def Update(self):
+        
 
     @classmethod
     @ndb.transactional_async
@@ -83,7 +88,7 @@ class Word(ndb.Model):
         if not entity:
             entity = Word(id=word, word=word)
         if entity.audio:
-            raise endpoints.ConflictException("Audio for {} already exists so skipping".format(word))
+            raise ndb.Return(True)
         url = "https://ssl.gstatic.com/dictionary/static/sounds/oxford/{}--_us_1.mp3".format(word)
         context = ndb.get_context()
         result = yield URLExists(url)
@@ -91,11 +96,60 @@ class Word(ndb.Model):
             url = "http://www.gstatic.com/dictionary/static/sounds/de/0/{}.mp3".format(word)
             result = yield URLExists(url)
             if not result:
-                raise endpoints.NotFoundException("Could not find google audio for {}".format(word))
+                raise ndb.Return(False)
         original = set(entity.audio)
         original.add(url)
         entity.audio = list(original)
         yield entity.put_async()
+        raise ndb.Return(True)
+
+    @classmethod
+    @ndb.tasklet
+    def AddDictionaryComAudioLink(cls, word):
+        entity = yield Word.get_by_id_async(word)
+        if not entity:
+            entity = Word(id=word, word=word)
+        # Ignore if audio already exists
+        if entity.audio:
+            raise ndb.Return(True)
+        url = "http://www.dictionary.com/browse/{}".format(word)
+        context = ndb.get_context()
+        result = yield context.urlfetch(url, deadline=1, follow_redirects=False)
+        if result.status_code != 200:
+            raise ndb.Return(False)
+        contents = result.content
+        contents = re.sub(r'[^\x00-\x7f]',r'', contents)
+        audioPrefix = 'class="main-header'
+        start = contents.find(audioPrefix)
+        if start == -1:
+            raise endpoints.NotFoundException("could not find {}".format(audioPrefix))
+        start_tag = '<audio>'
+        end_tag = '</audio>'
+        audioTags = FindDataBetween(contents, start_tag, end_tag, start)
+        if not audioTags:
+            raise ndb.Return(False)
+        start_tag = 'source src="'
+        end_tag = '"'
+        start = 0
+        while True:
+            try:
+                file_name = FindDataBetween(audioTags, start_tag, end_tag, start)
+            except Exception as e:
+                print "could not find file name"
+                raise ndb.Return(False)
+            print "file name is ", file_name
+            if not file_name:
+                raise ndb.Return(False)
+            start = audioTags.find(start_tag, start)
+            start = start + len(start_tag)
+            if file_name.endswith(".mp3"):
+                link = file_name
+                original = set(entity.audio)
+                original.add(link)
+                entity.audio = list(original)
+                yield entity.put_async()
+                raise ndb.Return(True)
+        raise ndb.Return(False)
 
     @classmethod
     @ndb.tasklet
@@ -105,33 +159,34 @@ class Word(ndb.Model):
             entity = Word(id=word, word=word)
         # Ignore if audio already exists
         if entity.audio:
-            raise endpoints.ConflictException("Audio for {} already exists so skipping".format(word))
+            raise ndb.Return(True)
         url = "https://www.merriam-webster.com/dictionary/{}".format(word)
         context = ndb.get_context()
         result = yield context.urlfetch(url, deadline=1, follow_redirects=False)
         if result.status_code != 200:
-            raise endpoints.NotFoundException("urlfetch return error. code: {}, content: {}".format(result.status_code, result.content))
+            raise ndb.Return(False)
         contents = result.content
         contents = re.sub(r'[^\x00-\x7f]',r'', contents)
         audioPrefix = 'a class="play-pron"'
         start = contents.find(audioPrefix)
         if start == -1:
-            raise endpoints.NotFoundException("could not find {}".format(audioPrefix))
+            raise ndb.Return(False)
         start_tag = 'data-file="'
         end_tag = '"'
         file_name = FindDataBetween(contents, start_tag, end_tag, start)
         if not file_name:
-            raise endpoints.NotFoundException("could not find data between {} and {}".format(start_tag, end_tag))
+            raise ndb.Return(False)
         start_tag = 'data-dir="'
         end_tag = '"'
         file_dir = FindDataBetween(contents, start_tag, end_tag, start)
         if not file_dir:
-            raise endpoints.NotFoundException("could not find data between {} and {}".format(start_tag, end_tag))
+            raise ndb.Return(False)
         link = "https://media.merriam-webster.com/audio/prons/en/us/mp3/{}/{}.mp3".format(file_dir, file_name)
         original = set(entity.audio)
         original.add(link)
         entity.audio = list(original)
         yield entity.put_async()
+        raise ndb.Return(True)
 
     @classmethod
     @ndb.transactional_async
