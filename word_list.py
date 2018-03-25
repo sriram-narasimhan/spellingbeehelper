@@ -83,6 +83,7 @@ class WordList(ndb.Model):
         if not entity:
             return "word list {} does not exist".format(word_list)
         entity.words = list(set(entity.words) | set(words))
+        entity.numWords = len(entity.words)
         entity.put()
         return None
 
@@ -94,6 +95,7 @@ class WordList(ndb.Model):
         if not entity:
             return "word list {} does not exist".format(word_list)
         entity.words = list(set(entity.words) - set(words))
+        entity.numWords = len(entity.words)
         entity.put()
         return None
 
@@ -267,6 +269,30 @@ class GetWordnikListsHandler(webapp2.RequestHandler):
 
 class AddListHandler(webapp2.RequestHandler):
   """Add a new word list."""
+  def get(self):
+    word_list = self.request.get("name", '')
+    self.response.headers['Access-Control-Allow-Origin'] = '*'
+    self.response.content_type = 'application/json'
+    if not word_list:
+        obj = {
+            "error": True,
+            "message": "No word list name was specified"
+        }
+        self.response.write(json.encode(obj))
+        return
+    message = WordList.Add(word_list).get_result()
+    if message:
+        obj = {
+            "error": True,
+            "message": "Error adding wordlist with name {}: {}".format(word_list, message)
+        }
+    else:
+        obj = {
+            "error": False,
+            "message": "Successfully added word list with name {}".format(word_list)
+        }
+    self.response.write(json.encode(obj))
+  """Add a new word list."""
   def post(self):
     word_list = self.request.get("name", '')
     self.response.headers['Access-Control-Allow-Origin'] = '*'
@@ -294,7 +320,7 @@ class AddListHandler(webapp2.RequestHandler):
 
 class RemoveListHandler(webapp2.RequestHandler):
   """Removes a word list."""
-  def post(self):
+  def get(self):
     word_list = self.request.get("name", '')
     self.response.headers['Access-Control-Allow-Origin'] = '*'
     self.response.content_type = 'application/json'
@@ -334,6 +360,27 @@ class GetListsHandler(webapp2.RequestHandler):
     obj = {
         "error": False,
         "lists": lists,
+    }
+    self.response.write(json.encode(obj))
+
+class GetListHandler(webapp2.RequestHandler):
+  """Get info about one list."""
+  def get(self):
+    self.response.headers['Access-Control-Allow-Origin'] = '*'
+    self.response.content_type = 'application/json'
+    word_list = self.request.get("name", '')
+    if not word_list:
+        raise endpoints.BadRequestException("No word list name was specified")
+    entry = WordList.Get(word_list).get_result()
+    if not entry:
+        raise endpoints.NotFoundException("Cannot find word list with name {}".format(word_list))
+    obj = {
+        "error": False,
+        "lists": {
+            "name": entry.name,
+            "words": list(entry.words),
+            "numWords": entry.numWords,
+        },
     }
     self.response.write(json.encode(obj))
 
@@ -450,6 +497,7 @@ app = webapp2.WSGIApplication([
     ('/wordlist/add-list', AddListHandler),
     ('/wordlist/remove-list', RemoveListHandler),
     ('/wordlist/get-lists', GetListsHandler),
+    ('/wordlist/get-list', GetListHandler),
     ('/wordlist/add-words', AddWordsHandler),
     ('/wordlist/remove-words', RemoveWordsHandler),
     ('/wordlist/get-words', GetWordsHandler),

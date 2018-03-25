@@ -1,5 +1,6 @@
 import re
 
+import datetime
 import endpoints
 import webapp2
 from webapp2_extras import json
@@ -36,7 +37,7 @@ class Word(ndb.Model):
     partsOfSpeech = ndb.StringProperty(repeated=True)
     definitions = ndb.StringProperty(repeated=True)
     created = ndb.model.DateTimeProperty(auto_now_add=True)
-    updated = ndb.model.DateTimeProperty(auto_now=True)
+    updated = ndb.model.DateTimeProperty()
     processed = ndb.BooleanProperty(default=False)
     favourite = ndb.BooleanProperty(default=False)
 
@@ -46,6 +47,7 @@ class Word(ndb.Model):
         audio.get_result()
         definition.get_result()
         self.processed = True
+        self.updated = datetime.datetime.now()
         self.put()
 
     @ndb.tasklet
@@ -78,6 +80,7 @@ class Word(ndb.Model):
         entity = Word(id=name, word=name)
         for key, value in attributes.items():
             setattr(entity, key, value)
+        entity.updated = datetime.datetime(1970,1,1)
         entity.put()
         return True
 
@@ -218,6 +221,7 @@ class Word(ndb.Model):
                     setattr(entity, key,list(set(value).union(set(original))))
                 else:
                     setattr(entity, key, value)
+        entity.updated = datetime.datetime.now()
         entity.put()
         return None
 
@@ -231,6 +235,7 @@ class Word(ndb.Model):
         original = set(entity.audio)
         original.add(link)
         entity.audio = list(original)
+        entity.updated = datetime.datetime.now()
         entity.put()
         return None
 
@@ -284,16 +289,21 @@ class AddHandler(webapp2.RequestHandler):
         }
         self.response.write(json.encode(obj))
         return
-    message = Word.Add(word).get_result()
-    if message:
+    try:
+        added = Word.Add(word)
+        if added:
+            message = "Successfully added word {}".format(word)
+        else:
+            message = "word {} already exists".format(word)
+        obj = {
+            "error": False,
+            "message": message
+        }
+    except Exception as e:
+        message = str(e)
         obj = {
             "error": True,
             "message": "Error adding word {}: {}".format(word, message)
-        }
-    else:
-        obj = {
-            "error": False,
-            "message": "Successfully added word {}".format(word)
         }
     self.response.write(json.encode(obj))
 
@@ -389,12 +399,28 @@ class GetDataHandler(webapp2.RequestHandler):
         messages.append(str(e))
     self.response.write("<br/>".join(messages))
 
+class UpdateWordsHandler(webapp2.RequestHandler):
+  """Updates data for some words."""
+  def get(self):
+    messages = []
+    try:
+        num_words = int(self.request.get("num_words", 25))
+        query = Word.query().order(Word.updated)
+        words = query.fetch(num_words)
+        for word in words:
+            word.GetInfo()
+            messages.append("updated word {}".format(word.word))
+    except Exception as e:
+        messages.append(str(e))
+    self.response.write("<br/>".join(messages))
+
 # [START app]
 app = webapp2.WSGIApplication([
     ('/word/add', AddHandler),
     ('/word/remove', RemoveHandler),
     ('/word/list', ListHandler),
     ('/word/get-data', GetDataHandler),
+    ('/word/update-words', UpdateWordsHandler),
     ('/word/make-favourite', MakeFavouriteHandler),
 ], debug=True)
 # [END app]

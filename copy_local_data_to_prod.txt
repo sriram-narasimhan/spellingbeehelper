@@ -1,3 +1,4 @@
-export GOOGLE_APPLICATION_CREDENTIALS='/Users/nsri/Downloads/Spelling Bee-33b400212494.json'
+export GOOGLE_APPLICATION_CREDENTIALS=/Users/nsri/Downloads/spellingbeehelper.json
+Go to http://localhost:9998/datastore-stats and run Generate Stats
 appcfg.py download_data --url http://localhost:52900/remote_api --file=data.sqlite --application=spellingbeehelper --num_threads=1
-appcfg.py -e mayadeepasriram@gmail.com upload_data --url=http://spellingbeehelper.appspot.com/_ah/remote_api --filename=data.sqlite
+appcfg.py -e indianbridge@gmail.com upload_data --url=http://spellingbeehelper.appspot.com/_ah/remote_api --filename=data.sqlite

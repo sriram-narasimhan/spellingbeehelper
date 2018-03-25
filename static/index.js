@@ -8,6 +8,7 @@ SPH = {};
 
 SPH.ajax = function(url) {
   var sitePrefix = "http://spellingbeehelper.appspot.com";
+  //var sitePrefix = "http://localhost:9999";
   var promise = new Promise(function(resolve, reject) {
     var request = $.ajax({
       method: "GET",
@@ -103,6 +104,15 @@ SPH.app = new function() {
 // Start the app
 SPH.app.start();
 
+function shuffleArray(array) {
+    for (var i = array.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var temp = array[i];
+        array[i] = array[j];
+        array[j] = temp;
+    }
+}
+
 SPH.wordList = function(name, numWords) {
   this.name = name;
   this.numWords = numWords;
@@ -114,9 +124,21 @@ SPH.wordList = function(name, numWords) {
   this.error = null;
   this.element = $("#words-container");
   this.listElement = $("#words-list-container");
+  this.orderFilter = $(":input[name= 'order-filter']").val();
   this.filter = $(":input[name= 'filter']").val();
+  this.setOrderFilter = function(value) {
+    this.orderFilter = value;
+  };
   this.setFilter = function(value) {
     this.filter = value;
+  };
+  this.sort = function() {
+    this.wordsArray.sort();
+    this.wordsWithAudioArray.sort();
+  };
+  this.random = function() {
+    shuffleArray(this.wordsArray);
+    shuffleArray(this.wordsWithAudioArray);
   };
   this.addWords = function (data) {
     var self = this;
@@ -218,9 +240,6 @@ SPH.wordList = function(name, numWords) {
     element.show();
     element.empty();
     if (self.wordsArray.length > 0) {
-      var min = 0;
-      var max = self.wordsWithAudioArray.length - 1;
-      var index = Math.floor(Math.random()*(max-min+1)+min);;
       var word = self.wordsArray[self.currentWordIndex];
       var html = "";
       html += '<button id="previous-word" class="ui-btn ui-btn-inline ui-mini ui-shadow ui-corner-all">Previous Word</button>';
@@ -299,6 +318,11 @@ SPH.wordList = function(name, numWords) {
         listElement.append("<h2>" + self.error + "</h1>");
       }
     } else {
+      if (self.orderFilter == "alphabetical") {
+        self.sort();
+      } else {
+        self.random();
+      }
       var html = "";
       html += '<ul id="words" data-type="content" data-role="listview" data-inset="true">';
       $.each(self.wordsArray, function( index, name ) {
@@ -347,6 +371,8 @@ SPH.wordLists = new function() {
       var name = $(this).data("name");
       self.currentList = name;
       SPH.wordLists.show();
+      e.preventDefault();
+      return false;
     });
     $(":input[name= 'filter']").on('change', function(){
       var clicked = $(this).val();
@@ -358,8 +384,20 @@ SPH.wordLists = new function() {
         $("li[data-icon='audio']").show();
       }
     });
+    $(":input[name= 'order-filter']").on('change', function(){
+      var clicked = $(this).val();
+      self.wordLists[self.currentList].setOrderFilter(clicked);
+      if (clicked == "alphabetical") {
+        self.wordLists[self.currentList].sort();
+      } else {
+        self.wordLists[self.currentList].random();
+      }
+      self.showWords();
+    });
     $(document).on("tap", "#check-answer", function(e) {
       self.checkAnswer();
+      e.preventDefault();
+      return false;
     });
     $(document).on("keypress", "#answer", function(e) {
       if (e.which === 13) {
@@ -369,28 +407,42 @@ SPH.wordLists = new function() {
     });
     $(document).on("tap", "#practice > #next-word", function(e) {
       self.showPractice();
+      e.preventDefault();
+      return false;
     });
-    $(document).on("swipeleft", "#practice", function() {
+    $(document).on("swipeleft", "#practice", function(e) {
       self.showPractice();
+      e.preventDefault();
+      return false;
     });
-    $(document).on("swiperight", "#practice", function() {
+    $(document).on("swiperight", "#practice", function(e) {
       self.showPractice();
+      e.preventDefault();
+      return false;
     });
     $(document).on("tap", "#learn > #next-word", function(e) {
       self.wordLists[self.currentList].incrementIndex();
       self.showLearn();
+      e.preventDefault();
+      return false;
     });
     $(document).on("tap", "#learn > #previous-word", function(e) {
       self.wordLists[self.currentList].decrementIndex();
       self.showLearn();
+      e.preventDefault();
+      return false;
     });
-    $(document).on("swipeleft", "#learn", function() {
+    $(document).on("swipeleft", "#learn", function(e) {
       self.wordLists[self.currentList].decrementIndex();
       self.showLearn();
+      e.preventDefault();
+      return false;
     });
-    $(document).on("swiperight", "#learn", function() {
+    $(document).on("swiperight", "#learn", function(e) {
       self.wordLists[self.currentList].incrementIndex();
       self.showLearn();
+      e.preventDefault();
+      return false;
     });
     $(document).on("tap", "[data-type='word']", function(e) {
       var index = $(this).data("index");
@@ -461,25 +513,31 @@ SPH.wordLists = new function() {
     var element = self.element
     element.empty();
     element.show();
-    if(self.numWordLists == 0) {
-      element.append("<li>The list of wordlists has not been loaded.</li>");
+    if (self.numWordLists == 0 && self.error) {
+      element.append("<li>The list of wordlists could not be loaded.</li>");
       if (self.error) {
         element.append("<li>" + self.error.message + "</li>");
       }
-    } else {
-      for (var name in self.wordLists) {
-        var value = self.wordLists[name];
-        var theme = "a";
-        if (self.currentList == name) {
-          theme = "b";
-        }
-        var li = "<li data-theme='" + theme + "' data-name='" + value.name + "' data-type='wordlist'>";
-        li += value.name;
-        li += ' <span class="ui-li-count">';
-        li += value.numWords;
-        li += "</span></li>";
-        element.append(li);
+      self.view.listview('refresh');
+      return;
+    }
+    if (self.numWordLists == 0) {
+      element.append("<li>No wordlists have been created yet.</li>");
+      self.view.listview('refresh');
+      return;
+    }
+    for (var name in self.wordLists) {
+      var value = self.wordLists[name];
+      var theme = "a";
+      if (self.currentList == name) {
+        theme = "b";
       }
+      var li = "<li data-theme='" + theme + "' data-name='" + value.name + "' data-type='wordlist'>";
+      li += value.name;
+      li += ' <span class="ui-li-count">';
+      li += value.numWords;
+      li += "</span></li>";
+      element.append(li);
     }
     self.view.listview('refresh');
   };

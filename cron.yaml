@@ -1,0 +1,4 @@
+cron:
+- description: "Update Words"
+  url: /word/update-words
+  schedule: every 10 minutes
